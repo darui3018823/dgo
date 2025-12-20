@@ -381,16 +381,16 @@ func (ApplicationCommandInteractionData) Type() InteractionType {
 
 // MessageComponentInteractionData contains the data of message component interaction.
 type MessageComponentInteractionData struct {
-	CustomID      string                           `json:"custom_id"`
-	ComponentType ComponentType                    `json:"component_type"`
-	Resolved      ComponentInteractionDataResolved `json:"resolved"`
+	CustomID      string                                  `json:"custom_id"`
+	ComponentType ComponentType                           `json:"component_type"`
+	Resolved      MessageComponentInteractionDataResolved `json:"resolved"`
 
 	// NOTE: Only filled when ComponentType is SelectMenuComponent (3). Otherwise is nil.
 	Values []string `json:"values"`
 }
 
-// ComponentInteractionDataResolved contains the resolved data of selected option.
-type ComponentInteractionDataResolved struct {
+// MessageComponentInteractionDataResolved contains the resolved data of selected option.
+type MessageComponentInteractionDataResolved struct {
 	Users    map[string]*User    `json:"users"`
 	Members  map[string]*Member  `json:"members"`
 	Roles    map[string]*Role    `json:"roles"`
@@ -404,9 +404,8 @@ func (MessageComponentInteractionData) Type() InteractionType {
 
 // ModalSubmitInteractionData contains the data of modal submit interaction.
 type ModalSubmitInteractionData struct {
-	CustomID   string                           `json:"custom_id"`
-	Components []MessageComponent               `json:"-"`
-	Resolved   ComponentInteractionDataResolved `json:"resolved"`
+	CustomID   string             `json:"custom_id"`
+	Components []MessageComponent `json:"-"`
 }
 
 // Type returns the type of interaction data.

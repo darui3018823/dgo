@@ -1,9 +1,9 @@
 linters:
   disable-all: true
   enable:
-    # - staticcheck
-    # - unused
-    - golint
+    - staticcheck
+    - unused
+    # - golint
 
 linters-settings:
   staticcheck:

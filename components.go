@@ -25,7 +25,6 @@ const (
 	FileComponentType              ComponentType = 13
 	SeparatorComponent             ComponentType = 14
 	ContainerComponent             ComponentType = 17
-	LabelComponent                 ComponentType = 18
 )
 
 // MessageComponent is a base interface for all message components.
@@ -72,8 +71,6 @@ func (umc *unmarshalableMessageComponent) UnmarshalJSON(src []byte) error {
 		umc.MessageComponent = &Separator{}
 	case ContainerComponent:
 		umc.MessageComponent = &Container{}
-	case LabelComponent:
-		umc.MessageComponent = &Label{}
 	default:
 		return fmt.Errorf("unknown component type: %d", v.Type)
 	}
@@ -267,9 +264,6 @@ type SelectMenu struct {
 
 	// Unique identifier for the component; auto populated through increment if not provided.
 	ID int `json:"id,omitempty"`
-
-	// List of values that is only populated when receiving an interaction response; do not fill this manually.
-	Values []string `json:"values,omitempty"`
 }
 
 // Type is a method to get the type of a component.
@@ -417,7 +411,7 @@ type Thumbnail struct {
 	ID          int               `json:"id,omitempty"`
 	Media       UnfurledMediaItem `json:"media"`
 	Description *string           `json:"description,omitempty"`
-	Spoiler     bool              `json:"spoiler,omitempty"`
+Spoiler     bool              `json:"spoiler,omitempty"`
 }
 
 // Type is a method to get the type of a component.
@@ -581,54 +575,6 @@ func (c Container) MarshalJSON() ([]byte, error) {
 	}{
 		container: container(c),
 		Type:      c.Type(),
-	})
-}
-
-// Label is a top-level layout component.
-// Labels wrap modal components with text as a label and optional description.
-type Label struct {
-	// Unique identifier for the component; auto populated through increment if not provided.
-	ID          int              `json:"id,omitempty"`
-	Label       string           `json:"label"`
-	Description string           `json:"description,omitempty"`
-	Component   MessageComponent `json:"component"`
-}
-
-// Type is a method to get the type of a component.
-func (Label) Type() ComponentType {
-	return LabelComponent
-}
-
-// UnmarshalJSON is a method for unmarshaling Label from JSON
-func (l *Label) UnmarshalJSON(data []byte) error {
-	type label Label
-
-	var v struct {
-		label
-		RawComponent unmarshalableMessageComponent `json:"component"`
-	}
-
-	err := json.Unmarshal(data, &v)
-	if err != nil {
-		return err
-	}
-
-	*l = Label(v.label)
-	l.Component = v.RawComponent.MessageComponent
-
-	return nil
-}
-
-// MarshalJSON is a method for marshaling Label to a JSON object.
-func (l Label) MarshalJSON() ([]byte, error) {
-	type label Label
-
-	return Marshal(struct {
-		label
-		Type ComponentType `json:"type"`
-	}{
-		label: label(l),
-		Type:  l.Type(),
 	})
 }
 

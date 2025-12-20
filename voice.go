@@ -1,5 +1,5 @@
 // Discordgo - Discord bindings for Go
-// Available at https://github.com/bwmarrin/discordgo
+// Available at https://github.com/darui3018823/discordgo
 
 // Copyright 2015-2016 Bruce Marriner <bruce@sqls.net>.  All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -511,8 +511,6 @@ func (v *VoiceConnection) onEvent(message []byte) {
 	default:
 		v.log(LogDebug, "unknown voice operation, %d, %s", e.Operation, string(e.RawData))
 	}
-
-	return
 }
 
 type voiceHeartbeatOp struct {
@@ -945,7 +943,7 @@ func (v *VoiceConnection) opusSender(udpConn *net.UDPConn, close <-chan struct{}
 			sequence++
 		}
 
-		if (timestamp + uint32(size)) >= 0xFFFFFFFF {
+		if timestamp > (0xFFFFFFFF - uint32(size)) {
 			timestamp = 0
 		} else {
 			timestamp += uint32(size)

@@ -1,5 +1,5 @@
 // Discordgo - Discord bindings for Go
-// Available at https://github.com/bwmarrin/discordgo
+// Available at https://github.com/darui3018823/discordgo
 
 // Copyright 2015-2016 Bruce Marriner <bruce@sqls.net>.  All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -3601,7 +3601,7 @@ func (s *Session) Entitlements(appID string, filterOptions *EntitlementFilterOpt
 		if filterOptions.UserID != "" {
 			queryParams.Set("user_id", filterOptions.UserID)
 		}
-		if filterOptions.SkuIDs != nil && len(filterOptions.SkuIDs) > 0 {
+		if len(filterOptions.SkuIDs) > 0 {
 			queryParams.Set("sku_ids", strings.Join(filterOptions.SkuIDs, ","))
 		}
 		if filterOptions.Before != nil {

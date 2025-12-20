@@ -4,7 +4,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/bwmarrin/discordgo"
+	"github.com/darui3018823/discordgo"
 )
 
 func ExampleApplication() {
@@ -52,6 +52,4 @@ func ExampleApplication() {
 	// Delete the application we created.
 	err = dg.ApplicationDelete(ap.ID)
 	log.Printf("Delete: err: %+v\n", err)
-
-	return
 }

@@ -1,4 +1,4 @@
-module github.com/bwmarrin/discordgo
+module github.com/darui3018823/discordgo
 
 go 1.13
 

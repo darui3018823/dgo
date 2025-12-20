@@ -45,13 +45,11 @@ var registeredInterfaceProviders = map[string]EventInterfaceProvider{}
 // access it's New() method.
 func registerInterfaceProvider(eh EventInterfaceProvider) {
 	if _, ok := registeredInterfaceProviders[eh.Type()]; ok {
-		return
 		// XXX:
 		// if we should error here, we need to do something with it.
 		// fmt.Errorf("event %s already registered", eh.Type())
 	}
 	registeredInterfaceProviders[eh.Type()] = eh
-	return
 }
 
 // eventHandlerInstance is a wrapper around an event handler, as functions

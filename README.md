@@ -4,6 +4,42 @@
 
 <img align="right" alt="DiscordGo logo" src="docs/img/discordgo.svg" width="400">
 
+## ⚠️ Patched Fork Notice
+
+**This is a patched fork of [bwmarrin/discordgo](https://github.com/bwmarrin/discordgo) with critical voice encryption fixes.**
+
+### Purpose
+
+This fork addresses Discord's voice encryption protocol changes that are not yet supported in the upstream repository (as of v0.29.0). Without these patches, voice connections may fail or produce corrupted audio when Discord servers negotiate modern encryption modes.
+
+### Key Changes
+
+- **AEAD XChaCha20-Poly1305 Support**: Implemented the `aead_xchacha20_poly1305_rtpsize` encryption mode, which Discord now prefers for voice connections. This mode provides authenticated encryption with associated data (AEAD) for enhanced security.
+
+- **Atomic Nonce Management**: Introduced thread-safe nonce handling using `sync/atomic` operations to prevent race conditions in concurrent voice packet encryption/decryption scenarios.
+
+- **Encryption Mode Priority**: Updated the encryption mode selection to prioritize modern AEAD modes while maintaining backward compatibility with legacy XSalsa20-Poly1305 modes.
+
+### Technical Details
+
+The implementation in [`voice.go`](voice.go) includes:
+
+- **XChaCha20-Poly1305-RTPSIZE Mode**: Uses a 4-byte incrementing nonce appended to each RTP packet, with the remaining 20 bytes of the 24-byte XChaCha20 nonce zero-padded. The RTP header is used as additional authenticated data (AAD).
+
+- **Thread-Safe Nonce Counter**: The `getAndIncrementNonce()` method uses `atomic.AddUint32()` to safely increment the nonce counter across multiple goroutines without mutex overhead.
+
+- **Encryption Preference Order**:
+  1. `aead_xchacha20_poly1305_rtpsize` (preferred)
+  2. `xsalsa20_poly1305_lite`
+  3. `xsalsa20_poly1305_suffix`
+  4. `xsalsa20_poly1305` (fallback)
+
+### Maintenance Status
+
+This is a **temporary maintenance fork** intended to provide a working solution until the upstream repository implements official support for Discord's updated voice encryption protocols. Users are encouraged to migrate back to the official repository once these features are merged upstream.
+
+---
+
 DiscordGo is a [Go](https://golang.org/) package that provides low level 
 bindings to the [Discord](https://discord.com/) chat client API. DiscordGo 
 has nearly complete support for all of the Discord API endpoints, websocket
@@ -34,7 +70,7 @@ This assumes you already have a working Go environment, if not please see
 `go get` *will always pull the latest tagged release from the master branch.*
 
 ```sh
-go get github.com/bwmarrin/discordgo
+go get github.com/darui3018823/discordgo
 ```
 
 ### Usage
@@ -42,7 +78,7 @@ go get github.com/bwmarrin/discordgo
 Import the package into your project.
 
 ```go
-import "github.com/bwmarrin/discordgo"
+import "github.com/darui3018823/discordgo"
 ```
 
 Construct a new Discord client which can be used to access the variety of 
@@ -63,7 +99,7 @@ Because of that there may be major changes to library in the future.
 The DiscordGo code is fairly well documented at this point and is currently
 the only documentation available. Go reference (below) presents that information in a nice format.
 
-- [![Go Reference](https://pkg.go.dev/badge/github.com/bwmarrin/discordgo.svg)](https://pkg.go.dev/github.com/bwmarrin/discordgo) 
+- [![Go Reference](https://pkg.go.dev/badge/github.com/darui3018823/discordgo.svg)](https://pkg.go.dev/github.com/darui3018823/discordgo) 
 - Hand crafted documentation coming eventually.
 
 
@@ -72,12 +108,12 @@ the only documentation available. Go reference (below) presents that information
 Below is a list of examples and other projects using DiscordGo.  Please submit 
 an issue if you would like your project added or removed from this list. 
 
-- [DiscordGo Examples](https://github.com/bwmarrin/discordgo/tree/master/examples) - A collection of example programs written with DiscordGo
-- [Awesome DiscordGo](https://github.com/bwmarrin/discordgo/wiki/Awesome-DiscordGo) - A curated list of high quality projects using DiscordGo
+- [DiscordGo Examples](https://github.com/darui3018823/discordgo/tree/master/examples) - A collection of example programs written with DiscordGo
+- [Awesome DiscordGo](https://github.com/darui3018823/discordgo/wiki/Awesome-DiscordGo) - A curated list of high quality projects using DiscordGo
 
 ## Troubleshooting
 For help with common problems please reference the 
-[Troubleshooting](https://github.com/bwmarrin/discordgo/wiki/Troubleshooting) 
+[Troubleshooting](https://github.com/darui3018823/discordgo/wiki/Troubleshooting) 
 section of the project wiki.
 
 

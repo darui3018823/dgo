@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"time"
 
 	"github.com/darui3018823/discordgo"
 	"github.com/joho/godotenv"
@@ -84,13 +83,16 @@ func main() {
 		// A safeguard against CSRF attacks: validate that the state returned by Discord matches the one stored in the cookie.
 		stateValues := q["state"]
 		if len(stateValues) == 0 {
+			http.Error(w, "state parameter missing", http.StatusBadRequest)
+			return
+		}
 		oauthState, err := r.Cookie("oauthstate")
 		if err != nil {
+			http.Error(w, "oauthstate cookie not found", http.StatusBadRequest)
 			return
 		}
 		if stateValues[0] != oauthState.Value {
-			return
-		}
+			http.Error(w, "state mismatch", http.StatusBadRequest)
 			return
 		}
 
@@ -133,21 +135,25 @@ func main() {
 		// Retrieve it to check if everything is ok.
 		info, err := ts.UserApplicationRoleConnection(*appID)
 
+		if err != nil {
+			w.Write([]byte(err.Error()))
+			return
+		}
+		jsonMetadata, _ := json.Marshal(info.Metadata)
+		// And show it to the user.
+		w.Write([]byte(fmt.Sprintf("Your updated metadata is: %s", jsonMetadata)))
+	})
+	http.ListenAndServe(":8010", nil)
+}
+
 // generateStateOauthCookie creates a cryptographically random state string,
 // stores it in a short-lived cookie, and returns it for use in the OAuth2 flow.
 func generateStateOauthCookie(w http.ResponseWriter) string {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		// In the unlikely event of a failure, fall back to a timestamp-based value.
-		state := fmt.Sprintf("%d", time.Now().UnixNano())
-		http.SetCookie(w, &http.Cookie{
-			Name:     "oauthstate",
-			Value:    state,
-			Path:     "/",
-			MaxAge:   300, // 5 minutes
-			HttpOnly: true,
-		})
-		return state
+		// A failure to generate cryptographically random data is a critical error for a security feature.
+		// The application should not proceed with an insecure fallback.
+		panic("failed to generate random bytes for oauth state: " + err.Error())
 	}
 	state := base64.URLEncoding.EncodeToString(b)
 	http.SetCookie(w, &http.Cookie{
@@ -158,14 +164,4 @@ func generateStateOauthCookie(w http.ResponseWriter) string {
 		HttpOnly: true,
 	})
 	return state
-}
-		if err != nil {
-			w.Write([]byte(err.Error()))
-			return
-		}
-		jsonMetadata, _ := json.Marshal(info.Metadata)
-		// And show it to the user.
-		w.Write([]byte(fmt.Sprintf("Your updated metadata is: %s", jsonMetadata)))
-	})
-	http.ListenAndServe(":8010", nil)
 }

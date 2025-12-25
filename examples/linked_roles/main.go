@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -71,15 +73,26 @@ func main() {
 	fmt.Println("Updated application metadata")
 	http.HandleFunc("/linked-roles", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache")
-		// Redirect the user to Discord OAuth2 page.
-		http.Redirect(w, r, oauthConfig.AuthCodeURL("random-state"), http.StatusMovedPermanently)
+		// Generate a per-request state and store it in a cookie, then redirect the user to Discord OAuth2 page.
+		state := generateStateOauthCookie(w)
+		http.Redirect(w, r, oauthConfig.AuthCodeURL(state), http.StatusMovedPermanently)
 	})
 	http.HandleFunc("/linked-roles-callback", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		// A safeguard against CSRF attacks.
-		// Usually tied to requesting user or random.
-		// NOTE: Hardcoded for the sake of the example.
-		if q["state"][0] != "random-state" {
+
+		// A safeguard against CSRF attacks: validate that the state returned by Discord matches the one stored in the cookie.
+		stateValues := q["state"]
+		if len(stateValues) == 0 {
+			http.Error(w, "state parameter missing", http.StatusBadRequest)
+			return
+		}
+		oauthState, err := r.Cookie("oauthstate")
+		if err != nil {
+			http.Error(w, "oauthstate cookie not found", http.StatusBadRequest)
+			return
+		}
+		if stateValues[0] != oauthState.Value {
+			http.Error(w, "state mismatch", http.StatusBadRequest)
 			return
 		}
 
@@ -121,6 +134,7 @@ func main() {
 
 		// Retrieve it to check if everything is ok.
 		info, err := ts.UserApplicationRoleConnection(*appID)
+
 		if err != nil {
 			w.Write([]byte(err.Error()))
 			return
@@ -130,4 +144,24 @@ func main() {
 		w.Write([]byte(fmt.Sprintf("Your updated metadata is: %s", jsonMetadata)))
 	})
 	http.ListenAndServe(":8010", nil)
+}
+
+// generateStateOauthCookie creates a cryptographically random state string,
+// stores it in a short-lived cookie, and returns it for use in the OAuth2 flow.
+func generateStateOauthCookie(w http.ResponseWriter) string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		// A failure to generate cryptographically random data is a critical error for a security feature.
+		// The application should not proceed with an insecure fallback.
+		panic("failed to generate random bytes for oauth state: " + err.Error())
+	}
+	state := base64.URLEncoding.EncodeToString(b)
+	http.SetCookie(w, &http.Cookie{
+		Name:     "oauthstate",
+		Value:    state,
+		Path:     "/",
+		MaxAge:   300, // 5 minutes
+		HttpOnly: true,
+	})
+	return state
 }

@@ -309,6 +309,32 @@ func (v *VoiceConnection) open() (err error) {
 	}
 
 	// Connect to VoiceConnection Websocket
+	// modified by darui3018823
+	// because Uncontrolled data used in network request (v.session.Dialer.Dial(vg, nil))
+
+	allowedDomains := []string{
+		".discord.media",          // Voice servers
+		".discord.gg",             // Invite shortlinks
+		".discordapp.com",         // Old domain
+		".discord.com",            // Main domain
+		".discordpartygames.com",  // Voice channels
+		".discord-activities.com", // Voice channels
+		".discordactivities.com",  // Voice channels
+		".discordsays.com",        // Voice channels
+	}
+
+	isValid := false
+	for _, domain := range allowedDomains {
+		if strings.HasSuffix(v.endpoint, domain) {
+			isValid = true
+			break
+		}
+	}
+
+	if !isValid {
+		return fmt.Errorf("invalid voice endpoint: %s", v.endpoint)
+	}
+
 	vg := "wss://" + strings.TrimSuffix(v.endpoint, ":80")
 	v.log(LogInformational, "connecting to voice endpoint %s", vg)
 	v.wsConn, _, err = v.session.Dialer.Dial(vg, nil)

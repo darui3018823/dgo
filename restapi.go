@@ -228,7 +228,17 @@ func (s *Session) RequestWithLockedBucket(method, urlStr, contentType string, b 
 
 	if s.Debug {
 		for k, v := range req.Header {
-			log.Printf("API REQUEST   HEADER :: [%s] = %+v\n", k, v)
+			// Redact sensitive headers before logging to avoid leaking secrets.
+			lowerKey := strings.ToLower(k)
+			if lowerKey == "authorization" || lowerKey == "cookie" || lowerKey == "set-cookie" {
+				redactedValues := make([]string, len(v))
+				for i := range v {
+					redactedValues[i] = "REDACTED"
+				}
+				log.Printf("API REQUEST   HEADER :: [%s] = %+v\n", k, redactedValues)
+			} else {
+				log.Printf("API REQUEST   HEADER :: [%s] = %+v\n", k, v)
+			}
 		}
 	}
 

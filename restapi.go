@@ -229,16 +229,16 @@ func (s *Session) RequestWithLockedBucket(method, urlStr, contentType string, b 
 	if s.Debug {
 		for k, v := range req.Header {
 			// Redact sensitive headers before logging to avoid leaking secrets.
-            lowerKey := strings.ToLower(k)
-            valuesToLog := v
-            if lowerKey == "authorization" || lowerKey == "cookie" || lowerKey == "set-cookie" {
-                redactedValues := make([]string, len(v))
-                for i := range v {
-                    redactedValues[i] = "REDACTED"
-                }
-                valuesToLog = redactedValues
-            }
-            log.Printf("API REQUEST   HEADER :: [%s] = %+v\n", k, valuesToLog)
+			lowerKey := strings.ToLower(k)
+			valuesToLog := v
+			if lowerKey == "authorization" || lowerKey == "cookie" || lowerKey == "set-cookie" {
+				redactedValues := make([]string, len(v))
+				for i := range v {
+					redactedValues[i] = "REDACTED"
+				}
+				valuesToLog = redactedValues
+			}
+			log.Printf("API REQUEST   HEADER :: [%s] = %+v\n", k, valuesToLog)
 		}
 	}
 
@@ -265,21 +265,21 @@ func (s *Session) RequestWithLockedBucket(method, urlStr, contentType string, b 
 	}
 
 	if s.Debug {
-    	log.Printf("API RESPONSE STATUS :: %s\n", resp.Status) 
+		log.Printf("API RESPONSE STATUS :: %s\n", resp.Status)
 
-	    for k, v := range resp.Header {
-    	    lowerKey := strings.ToLower(k)
-        	valuesToLog := v
-        
-        	if lowerKey == "authorization" || lowerKey == "cookie" || lowerKey == "set-cookie" {
-            	redactedValues := make([]string, len(v))
-            	for i := range v {
-                	redactedValues[i] = "REDACTED"
-            	}
-            	valuesToLog = redactedValues
-        	}
-	        log.Printf("API RESPONSE HEADER :: [%s] = %+v\n", k, valuesToLog)
-    	}
+		for k, v := range resp.Header {
+			lowerKey := strings.ToLower(k)
+			valuesToLog := v
+
+			if lowerKey == "authorization" || lowerKey == "cookie" || lowerKey == "set-cookie" {
+				redactedValues := make([]string, len(v))
+				for i := range v {
+					redactedValues[i] = "REDACTED"
+				}
+				valuesToLog = redactedValues
+			}
+			log.Printf("API RESPONSE HEADER :: [%s] = %+v\n", k, valuesToLog)
+		}
 	}
 
 	switch resp.StatusCode {

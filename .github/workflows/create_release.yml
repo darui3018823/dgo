@@ -5,6 +5,7 @@ on:
     tags:
       - 'v*.*.*'
       - 'v*.*.*-*'
+      - 'v*.*.*-*-*'
 
 permissions:
   contents: write

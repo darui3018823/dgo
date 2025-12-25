@@ -265,12 +265,21 @@ func (s *Session) RequestWithLockedBucket(method, urlStr, contentType string, b 
 	}
 
 	if s.Debug {
+    	log.Printf("API RESPONSE STATUS :: %s\n", resp.Status) 
 
-		log.Printf("API RESPONSE  STATUS :: %s\n", resp.Status)
-		for k, v := range resp.Header {
-			log.Printf("API RESPONSE  HEADER :: [%s] = %+v\n", k, v)
-		}
-		log.Printf("API RESPONSE    BODY :: [%s]\n\n\n", response)
+	    for k, v := range resp.Header {
+    	    lowerKey := strings.ToLower(k)
+        	valuesToLog := v
+        
+        	if lowerKey == "authorization" || lowerKey == "cookie" || lowerKey == "set-cookie" {
+            	redactedValues := make([]string, len(v))
+            	for i := range v {
+                	redactedValues[i] = "REDACTED"
+            	}
+            	valuesToLog = redactedValues
+        	}
+	        log.Printf("API RESPONSE HEADER :: [%s] = %+v\n", k, valuesToLog)
+    	}
 	}
 
 	switch resp.StatusCode {

@@ -13,6 +13,7 @@ package dgo
 import (
 	"bytes"
 	"compress/zlib"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,6 +49,11 @@ type resumePacket struct {
 // Open creates a websocket connection to Discord.
 // See: https://discord.com/developers/docs/topics/gateway#connecting
 func (s *Session) Open() error {
+	return s.OpenWithContext(context.Background())
+}
+
+// OpenWithContext creates a websocket connection to Discord with a context.
+func (s *Session) OpenWithContext(ctx context.Context) error {
 	s.log(LogInformational, "called")
 
 	var err error
@@ -77,7 +83,9 @@ func (s *Session) Open() error {
 	s.log(LogInformational, "connecting to gateway %s", s.gateway)
 	header := http.Header{}
 	header.Add("accept-encoding", "zlib")
-	s.wsConn, _, err = s.Dialer.Dial(s.gateway, header)
+
+	// Use DialContext if available, otherwise fallback (though gorilla/websocket has it since forever)
+	s.wsConn, _, err = s.Dialer.DialContext(ctx, s.gateway, header)
 	if err != nil {
 		s.log(LogError, "error connecting to gateway %s, %s", s.gateway, err)
 		s.gateway = "" // clear cached gateway

@@ -9,7 +9,7 @@ linters-settings:
   staticcheck:
     checks: ["all"]
 
-  unused:
+  unused: {}
 
 issues:
   include:

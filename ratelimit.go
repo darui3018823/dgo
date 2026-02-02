@@ -227,7 +227,7 @@ func (b *Bucket) Release(headers http.Header) error {
 		b.reset = time.Now().Add(delta)
 	}
 
-	// Udpate remaining if header is present
+	// Update remaining if header is present
 	if remaining != "" {
 		parsedRemaining, err := strconv.ParseInt(remaining, 10, 32)
 		if err != nil {

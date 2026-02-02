@@ -4,7 +4,7 @@ import (
 	"encoding/base64"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 
@@ -58,7 +58,7 @@ func main() {
 			_ = resp.Body.Close()
 		}()
 
-		img, err := ioutil.ReadAll(resp.Body)
+		img, err := io.ReadAll(resp.Body)
 		if err != nil {
 			fmt.Println("Error reading the response, ", err)
 			return
@@ -70,7 +70,7 @@ func main() {
 
 	// If we're using a local file for the Avatar
 	if AvatarFile != "" {
-		img, err := ioutil.ReadFile(AvatarFile)
+		img, err := os.ReadFile(AvatarFile)
 		if err != nil {
 			fmt.Println(err)
 		}

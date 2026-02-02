@@ -14,6 +14,7 @@ package dgo
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"regexp"
@@ -38,6 +39,9 @@ type Session struct {
 	// Debug for printing JSON request/responses
 	Debug    bool // Deprecated, will be removed.
 	LogLevel int
+
+	// Logger for structured logging
+	Logger *slog.Logger
 
 	// Should the session reconnect the websocket on errors.
 	ShouldReconnectOnError bool

@@ -69,13 +69,34 @@ func msglog(msgL, caller int, format string, a ...interface{}) {
 // This adds a check to insure the message is only logged
 // if the session log level is equal or higher than the
 // message log level
+// helper function that wraps msglog for the Session struct
+// This adds a check to insure the message is only logged
+// if the session log level is equal or higher than the
+// message log level
 func (s *Session) log(msgL int, format string, a ...interface{}) {
+	s.RLock()
+	logger := s.Logger
+	s.RUnlock()
 
-	if msgL > s.LogLevel {
+	if logger == nil {
 		return
 	}
 
-	msglog(msgL, 2, format, a...)
+	msg := fmt.Sprintf(format, a...)
+
+	// Map old integer levels to slog levels
+	switch msgL {
+	case LogError:
+		logger.Error(msg)
+	case LogWarning:
+		logger.Warn(msg)
+	case LogInformational:
+		logger.Info(msg)
+	case LogDebug:
+		logger.Debug(msg)
+	default:
+		logger.Info(msg)
+	}
 }
 
 // helper function that wraps msglog for the VoiceConnection struct

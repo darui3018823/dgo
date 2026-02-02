@@ -14,6 +14,7 @@
 package dgo
 
 import (
+	"log/slog"
 	"net/http"
 	"runtime"
 	"time"
@@ -51,6 +52,7 @@ func New(token string) (s *Session, err error) {
 		UserAgent:                          "DiscordBot (https://github.com/darui3018823/dgo, v" + VERSION + ")",
 		sequence:                           new(int64),
 		LastHeartbeatAck:                   time.Now().UTC(),
+		Logger:                             slog.Default(),
 	}
 
 	// Initialize the Identify Package with defaults

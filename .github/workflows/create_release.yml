@@ -1,0 +1,59 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - 'v*.*.*-*'
+      - 'v*.*.*-*-*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Run tests
+        run: go test -v ./...
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get the previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          CURRENT_TAG=${GITHUB_REF#refs/tags/}
+          
+          echo "## What's Changed" > CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          
+          if [ -n "$PREV_TAG" ]; then
+            git log ${PREV_TAG}..${CURRENT_TAG} --pretty=format:"* %s (%h)" --no-merges >> CHANGELOG.md
+          else
+            git log ${CURRENT_TAG} --pretty=format:"* %s (%h)" --no-merges >> CHANGELOG.md
+          fi
+          
+          echo "" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${CURRENT_TAG}" >> CHANGELOG.md
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

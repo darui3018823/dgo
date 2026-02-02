@@ -1,0 +1,32 @@
+# .github/dependabot.yml
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+      include: "scope"
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    groups:
+      github-actions:
+        patterns:
+          - "*"

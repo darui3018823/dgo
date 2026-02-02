@@ -1,0 +1,17 @@
+site_name: DiscordGo
+site_author: Bruce Marriner
+site_url: http://darui3018823.github.io/discordgo/
+repo_url: https://github.com/darui3018823/discordgo
+
+dev_addr: 0.0.0.0:8000
+theme: yeti
+
+markdown_extensions:
+    - smarty
+    - toc:
+        permalink: True
+    - sane_lists
+
+pages:
+    - 'Home': 'index.md'
+    - 'Getting Started': 'GettingStarted.md'

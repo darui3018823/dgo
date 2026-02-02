@@ -1,0 +1,160 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"strings"
+
+	"github.com/darui3018823/dgo"
+)
+
+// Bot parameters
+var (
+	GuildID        = flag.String("guild", "", "Test guild ID")
+	BotToken       = flag.String("token", "", "Bot access token")
+	AppID          = flag.String("app", "", "Application ID")
+	Cleanup        = flag.Bool("cleanup", true, "Cleanup of commands")
+	ResultsChannel = flag.String("results", "", "Channel where send survey results to")
+)
+
+var s *dgo.Session
+
+func init() {
+	flag.Parse()
+}
+
+func init() {
+	var err error
+	s, err = dgo.New("Bot " + *BotToken)
+	if err != nil {
+		log.Fatalf("Invalid bot parameters: %v", err)
+	}
+}
+
+var (
+	commands = []dgo.ApplicationCommand{
+		{
+			Name:        "modals-survey",
+			Description: "Take a survey about modals",
+		},
+	}
+	commandsHandlers = map[string]func(s *dgo.Session, i *dgo.InteractionCreate){
+		"modals-survey": func(s *dgo.Session, i *dgo.InteractionCreate) {
+			err := s.InteractionRespond(i.Interaction, &dgo.InteractionResponse{
+				Type: dgo.InteractionResponseModal,
+				Data: &dgo.InteractionResponseData{
+					CustomID: "modals_survey_" + i.Interaction.Member.User.ID,
+					Title:    "Modals survey",
+					Components: []dgo.MessageComponent{
+						dgo.ActionsRow{
+							Components: []dgo.MessageComponent{
+								dgo.TextInput{
+									CustomID:    "opinion",
+									Label:       "What is your opinion on them?",
+									Style:       dgo.TextInputShort,
+									Placeholder: "Don't be shy, share your opinion with us",
+									Required:    true,
+									MaxLength:   300,
+									MinLength:   10,
+								},
+							},
+						},
+						dgo.ActionsRow{
+							Components: []dgo.MessageComponent{
+								dgo.TextInput{
+									CustomID:  "suggestions",
+									Label:     "What would you suggest to improve them?",
+									Style:     dgo.TextInputParagraph,
+									Required:  false,
+									MaxLength: 2000,
+								},
+							},
+						},
+					},
+				},
+			})
+			if err != nil {
+				panic(err)
+			}
+		},
+	}
+)
+
+func main() {
+	s.AddHandler(func(s *dgo.Session, r *dgo.Ready) {
+		log.Println("Bot is up!")
+	})
+
+	s.AddHandler(func(s *dgo.Session, i *dgo.InteractionCreate) {
+		switch i.Type {
+		case dgo.InteractionApplicationCommand:
+			if h, ok := commandsHandlers[i.ApplicationCommandData().Name]; ok {
+				h(s, i)
+			}
+		case dgo.InteractionModalSubmit:
+			err := s.InteractionRespond(i.Interaction, &dgo.InteractionResponse{
+				Type: dgo.InteractionResponseChannelMessageWithSource,
+				Data: &dgo.InteractionResponseData{
+					Content: "Thank you for taking your time to fill this survey",
+					Flags:   dgo.MessageFlagsEphemeral,
+				},
+			})
+			if err != nil {
+				panic(err)
+			}
+			data := i.ModalSubmitData()
+
+			if !strings.HasPrefix(data.CustomID, "modals_survey") {
+				return
+			}
+
+			userid := strings.Split(data.CustomID, "_")[2]
+			_, err = s.ChannelMessageSend(*ResultsChannel, fmt.Sprintf(
+				"Feedback received. From <@%s>\n\n**Opinion**:\n%s\n\n**Suggestions**:\n%s",
+				userid,
+				data.Components[0].(*dgo.ActionsRow).Components[0].(*dgo.TextInput).Value,
+				data.Components[1].(*dgo.ActionsRow).Components[0].(*dgo.TextInput).Value,
+			))
+			if err != nil {
+				panic(err)
+			}
+		}
+	})
+
+	cmdIDs := make(map[string]string, len(commands))
+
+	for _, cmd := range commands {
+		rcmd, err := s.ApplicationCommandCreate(*AppID, *GuildID, &cmd)
+		if err != nil {
+			log.Fatalf("Cannot create slash command %q: %v", cmd.Name, err)
+		}
+
+		cmdIDs[rcmd.ID] = rcmd.Name
+	}
+
+	err := s.Open()
+	if err != nil {
+		log.Fatalf("Cannot open the session: %v", err)
+	}
+	defer s.Close()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt)
+	<-stop
+	log.Println("Graceful shutdown")
+
+	if !*Cleanup {
+		return
+	}
+
+	for id, name := range cmdIDs {
+		err := s.ApplicationCommandDelete(*AppID, *GuildID, id)
+		if err != nil {
+			log.Fatalf("Cannot delete slash command %q: %v", name, err)
+		}
+	}
+
+}

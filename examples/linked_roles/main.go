@@ -165,5 +165,3 @@ func generateStateOauthCookie(w http.ResponseWriter) string {
 	})
 	return state
 }
-
-

@@ -97,5 +97,3 @@ func main() {
 
 	handleVoice(v.OpusRecv)
 }
-
-

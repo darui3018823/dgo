@@ -1,6 +1,7 @@
 package dgo
 
 import (
+	"context"
 	"math"
 	"net/http"
 	"strconv"
@@ -87,19 +88,40 @@ func (r *RateLimiter) GetWaitTime(b *Bucket, minRemaining int) time.Duration {
 
 // LockBucket Locks until a request can be made
 func (r *RateLimiter) LockBucket(bucketID string) *Bucket {
-	return r.LockBucketObject(r.GetBucket(bucketID))
+	// Fallback to background context for backward compatibility
+	b, _ := r.LockBucketContext(context.Background(), bucketID)
+	return b
+}
+
+// LockBucketContext Locks until a request can be made or context is cancelled
+func (r *RateLimiter) LockBucketContext(ctx context.Context, bucketID string) (*Bucket, error) {
+	return r.LockBucketObjectContext(ctx, r.GetBucket(bucketID))
 }
 
 // LockBucketObject Locks an already resolved bucket until a request can be made
 func (r *RateLimiter) LockBucketObject(b *Bucket) *Bucket {
+	// Fallback to background context for backward compatibility
+	b, _ = r.LockBucketObjectContext(context.Background(), b)
+	return b
+}
+
+// LockBucketObjectContext Locks an already resolved bucket until a request can be made or context is cancelled
+func (r *RateLimiter) LockBucketObjectContext(ctx context.Context, b *Bucket) (*Bucket, error) {
 	b.Lock()
 
-	if wait := r.GetWaitTime(b, 1); wait > 0 {
-		time.Sleep(wait)
+	wait := r.GetWaitTime(b, 1)
+	if wait > 0 {
+		select {
+		case <-ctx.Done():
+			b.Unlock()
+			return nil, ctx.Err()
+		case <-time.After(wait):
+			// Wait completed
+		}
 	}
 
 	b.Remaining--
-	return b
+	return b, nil
 }
 
 // Bucket represents a ratelimit bucket, each bucket gets ratelimited individually (-global ratelimits)

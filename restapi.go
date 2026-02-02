@@ -189,7 +189,21 @@ func (s *Session) RequestRaw(method, urlStr, contentType string, b []byte, bucke
 	if bucketID == "" {
 		bucketID = strings.SplitN(urlStr, "?", 2)[0]
 	}
-	return s.RequestWithLockedBucket(method, urlStr, contentType, b, s.Ratelimiter.LockBucket(bucketID), sequence, options...)
+
+	// Create a dummy request to extract context from options
+	req, _ := http.NewRequest(method, urlStr, nil)
+	cfg := newRequestConfig(s, req)
+	for _, opt := range options {
+		opt(cfg)
+	}
+	ctx := cfg.Request.Context()
+
+	bucket, err := s.Ratelimiter.LockBucketContext(ctx, bucketID)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.RequestWithLockedBucket(method, urlStr, contentType, b, bucket, sequence, options...)
 }
 
 // RequestWithLockedBucket makes a request using a bucket that's already been locked
@@ -307,11 +321,20 @@ func (s *Session) RequestWithLockedBucket(method, urlStr, contentType string, b 
 			s.log(LogInformational, "Rate Limiting %s, retry in %v", urlStr, rl.RetryAfter)
 			s.handleEvent(rateLimitEventType, &RateLimit{TooManyRequests: &rl, URL: urlStr})
 
-			time.Sleep(rl.RetryAfter)
-			// we can make the above smarter
-			// this method can cause longer delays than required
+			// Wait for the rate limit or context cancellation
+			select {
+			case <-cfg.Request.Context().Done():
+				return nil, cfg.Request.Context().Err()
+			case <-time.After(rl.RetryAfter):
+			}
 
-			response, err = s.RequestWithLockedBucket(method, urlStr, contentType, b, s.Ratelimiter.LockBucketObject(bucket), sequence, options...)
+			// Re-lock the bucket with context
+			bucket, err = s.Ratelimiter.LockBucketObjectContext(cfg.Request.Context(), bucket)
+			if err != nil {
+				return nil, err
+			}
+
+			response, err = s.RequestWithLockedBucket(method, urlStr, contentType, b, bucket, sequence, options...)
 		} else {
 			err = &RateLimitError{&RateLimit{TooManyRequests: &rl, URL: urlStr}}
 		}

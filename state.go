@@ -52,6 +52,8 @@ type State struct {
 	guildMap   map[string]*Guild
 	channelMap map[string]*Channel
 	memberMap  map[string]map[string]*Member
+	roleMap    map[string]map[string]*Role  // guildID -> roleID -> Role
+	emojiMap   map[string]map[string]*Emoji // guildID -> emojiID -> Emoji
 }
 
 // NewState creates an empty state.
@@ -73,6 +75,8 @@ func NewState() *State {
 		guildMap:           make(map[string]*Guild),
 		channelMap:         make(map[string]*Channel),
 		memberMap:          make(map[string]map[string]*Member),
+		roleMap:            make(map[string]map[string]*Role),
+		emojiMap:           make(map[string]map[string]*Emoji),
 	}
 }
 
@@ -82,6 +86,22 @@ func (s *State) createMemberMap(guild *Guild) {
 		members[m.User.ID] = m
 	}
 	s.memberMap[guild.ID] = members
+}
+
+func (s *State) createRoleMap(guild *Guild) {
+	roles := make(map[string]*Role)
+	for _, r := range guild.Roles {
+		roles[r.ID] = r
+	}
+	s.roleMap[guild.ID] = roles
+}
+
+func (s *State) createEmojiMap(guild *Guild) {
+	emojis := make(map[string]*Emoji)
+	for _, e := range guild.Emojis {
+		emojis[e.ID] = e
+	}
+	s.emojiMap[guild.ID] = emojis
 }
 
 // GuildAdd adds a guild to the current world state, or
@@ -110,6 +130,20 @@ func (s *State) GuildAdd(guild *Guild) error {
 	} else if _, ok := s.memberMap[guild.ID]; !ok {
 		// Even if we have no new member slice, we still initialize the member map for this guild if it doesn't exist
 		s.memberMap[guild.ID] = make(map[string]*Member)
+	}
+
+	// If this guild contains a new role slice, regenerate the role map
+	if guild.Roles != nil {
+		s.createRoleMap(guild)
+	} else if _, ok := s.roleMap[guild.ID]; !ok {
+		s.roleMap[guild.ID] = make(map[string]*Role)
+	}
+
+	// If this guild contains a new emoji slice, regenerate the emoji map
+	if guild.Emojis != nil {
+		s.createEmojiMap(guild)
+	} else if _, ok := s.emojiMap[guild.ID]; !ok {
+		s.emojiMap[guild.ID] = make(map[string]*Emoji)
 	}
 
 	if g, ok := s.guildMap[guild.ID]; ok {
@@ -164,6 +198,9 @@ func (s *State) GuildRemove(guild *Guild) error {
 	defer s.Unlock()
 
 	delete(s.guildMap, guild.ID)
+	delete(s.memberMap, guild.ID)
+	delete(s.roleMap, guild.ID)
+	delete(s.emojiMap, guild.ID)
 
 	for i, g := range s.Guilds {
 		if g.ID == guild.ID {
@@ -418,13 +455,21 @@ func (s *State) RoleAdd(guildID string, role *Role) error {
 	s.Lock()
 	defer s.Unlock()
 
-	for i, r := range guild.Roles {
-		if r.ID == role.ID {
-			guild.Roles[i] = role
-			return nil
-		}
+	roles, ok := s.roleMap[guildID]
+	if !ok {
+		roles = make(map[string]*Role)
+		s.roleMap[guildID] = roles
 	}
 
+	if r, ok := roles[role.ID]; ok {
+		// Update existing role in-place
+		*r = *role
+		roles[role.ID] = r
+		return nil
+	}
+
+	// New role, add to both map and slice
+	roles[role.ID] = role
 	guild.Roles = append(guild.Roles, role)
 	return nil
 }
@@ -443,14 +488,26 @@ func (s *State) RoleRemove(guildID, roleID string) error {
 	s.Lock()
 	defer s.Unlock()
 
+	roles, ok := s.roleMap[guildID]
+	if !ok {
+		return ErrStateNotFound
+	}
+
+	if _, ok := roles[roleID]; !ok {
+		return ErrStateNotFound
+	}
+
+	delete(roles, roleID)
+
+	// Remove from slice as well
 	for i, r := range guild.Roles {
 		if r.ID == roleID {
 			guild.Roles = append(guild.Roles[:i], guild.Roles[i+1:]...)
-			return nil
+			break
 		}
 	}
 
-	return ErrStateNotFound
+	return nil
 }
 
 // Role gets a role by ID from a guild.
@@ -459,18 +516,16 @@ func (s *State) Role(guildID, roleID string) (*Role, error) {
 		return nil, ErrNilState
 	}
 
-	guild, err := s.Guild(guildID)
-	if err != nil {
-		return nil, err
-	}
-
 	s.RLock()
 	defer s.RUnlock()
 
-	for _, r := range guild.Roles {
-		if r.ID == roleID {
-			return r, nil
-		}
+	roles, ok := s.roleMap[guildID]
+	if !ok {
+		return nil, ErrStateNotFound
+	}
+
+	if r, ok := roles[roleID]; ok {
+		return r, nil
 	}
 
 	return nil, ErrStateNotFound
@@ -695,18 +750,16 @@ func (s *State) Emoji(guildID, emojiID string) (*Emoji, error) {
 		return nil, ErrNilState
 	}
 
-	guild, err := s.Guild(guildID)
-	if err != nil {
-		return nil, err
-	}
-
 	s.RLock()
 	defer s.RUnlock()
 
-	for _, e := range guild.Emojis {
-		if e.ID == emojiID {
-			return e, nil
-		}
+	emojis, ok := s.emojiMap[guildID]
+	if !ok {
+		return nil, ErrStateNotFound
+	}
+
+	if e, ok := emojis[emojiID]; ok {
+		return e, nil
 	}
 
 	return nil, ErrStateNotFound
@@ -726,13 +779,21 @@ func (s *State) EmojiAdd(guildID string, emoji *Emoji) error {
 	s.Lock()
 	defer s.Unlock()
 
-	for i, e := range guild.Emojis {
-		if e.ID == emoji.ID {
-			guild.Emojis[i] = emoji
-			return nil
-		}
+	emojis, ok := s.emojiMap[guildID]
+	if !ok {
+		emojis = make(map[string]*Emoji)
+		s.emojiMap[guildID] = emojis
 	}
 
+	if e, ok := emojis[emoji.ID]; ok {
+		// Update existing emoji in-place
+		*e = *emoji
+		emojis[emoji.ID] = e
+		return nil
+	}
+
+	// New emoji, add to both map and slice
+	emojis[emoji.ID] = emoji
 	guild.Emojis = append(guild.Emojis, emoji)
 	return nil
 }

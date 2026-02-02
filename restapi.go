@@ -19,7 +19,7 @@ import (
 	_ "image/jpeg" // For JPEG decoding
 	_ "image/png"  // For PNG decoding
 	"io"
-	"io/ioutil"
+
 	"log"
 	"net/http"
 	"net/url"
@@ -273,7 +273,7 @@ func (s *Session) RequestWithLockedBucket(method, urlStr, contentType string, b 
 		return
 	}
 
-	response, err = ioutil.ReadAll(resp.Body)
+	response, err = io.ReadAll(resp.Body)
 	if err != nil {
 		return
 	}

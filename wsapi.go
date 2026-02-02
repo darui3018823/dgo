@@ -270,8 +270,8 @@ type helloOp struct {
 	HeartbeatInterval time.Duration `json:"heartbeat_interval"`
 }
 
-// FailedHeartbeatAcks is the Number of heartbeat intervals to wait until forcing a connection restart.
-const FailedHeartbeatAcks time.Duration = 5 * time.Millisecond
+// FailedHeartbeatAcks is the number of heartbeat intervals to wait until forcing a connection restart.
+const FailedHeartbeatAcks = 5
 
 // HeartbeatLatency returns the latency between heartbeat acknowledgement and heartbeat send.
 func (s *Session) HeartbeatLatency() time.Duration {
@@ -305,7 +305,7 @@ func (s *Session) heartbeat(wsConn *websocket.Conn, listening <-chan interface{}
 		s.LastHeartbeatSent = time.Now().UTC()
 		err = wsConn.WriteJSON(heartbeatOp{1, sequence})
 		s.wsMutex.Unlock()
-		if err != nil || time.Now().UTC().Sub(last) > (heartbeatIntervalMsec*FailedHeartbeatAcks) {
+		if err != nil || time.Now().UTC().Sub(last) > (heartbeatIntervalMsec*time.Millisecond*time.Duration(FailedHeartbeatAcks)) {
 			if err != nil {
 				s.log(LogError, "error sending heartbeat to gateway %s, %s", s.gateway, err)
 			} else {

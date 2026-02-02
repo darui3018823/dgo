@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
+
 	"net/http"
 	"strconv"
 	"time"
@@ -649,7 +649,7 @@ func VerifyInteraction(r *http.Request, key ed25519.PublicKey) bool {
 
 	// at the end of the function, copy the original body back into the request
 	defer func() {
-		r.Body = ioutil.NopCloser(&body)
+		r.Body = io.NopCloser(&body)
 	}()
 
 	// copy body into buffers

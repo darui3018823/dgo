@@ -23,6 +23,7 @@ type RateLimiter struct {
 	sync.Mutex
 	global           *int64
 	buckets          map[string]*Bucket
+	bucketHashes     map[string]string // maps endpoint key to bucket hash
 	customRateLimits []*customRateLimit
 }
 
@@ -30,8 +31,9 @@ type RateLimiter struct {
 func NewRatelimiter() *RateLimiter {
 
 	return &RateLimiter{
-		buckets: make(map[string]*Bucket),
-		global:  new(int64),
+		buckets:      make(map[string]*Bucket),
+		bucketHashes: make(map[string]string),
+		global:       new(int64),
 		customRateLimits: []*customRateLimit{
 			{
 				suffix:   "//reactions//",
@@ -47,14 +49,22 @@ func (r *RateLimiter) GetBucket(key string) *Bucket {
 	r.Lock()
 	defer r.Unlock()
 
+	// Check if this key maps to a known bucket hash
+	if hash, ok := r.bucketHashes[key]; ok {
+		if bucket, ok := r.buckets[hash]; ok {
+			return bucket
+		}
+	}
+
 	if bucket, ok := r.buckets[key]; ok {
 		return bucket
 	}
 
 	b := &Bucket{
-		Remaining: 1,
-		Key:       key,
-		global:    r.global,
+		Remaining:   1,
+		Key:         key,
+		global:      r.global,
+		ratelimiter: r,
 	}
 
 	// Check if there is a custom ratelimit set for this bucket ID.
@@ -127,10 +137,11 @@ func (r *RateLimiter) LockBucketObjectContext(ctx context.Context, b *Bucket) (*
 // Bucket represents a ratelimit bucket, each bucket gets ratelimited individually (-global ratelimits)
 type Bucket struct {
 	sync.Mutex
-	Key       string
-	Remaining int
-	reset     time.Time
-	global    *int64
+	Key         string
+	Remaining   int
+	reset       time.Time
+	global      *int64
+	ratelimiter *RateLimiter
 
 	lastReset       time.Time
 	customRateLimit *customRateLimit
@@ -162,6 +173,18 @@ func (b *Bucket) Release(headers http.Header) error {
 	reset := headers.Get("X-RateLimit-Reset")
 	global := headers.Get("X-RateLimit-Global")
 	resetAfter := headers.Get("X-RateLimit-Reset-After")
+	bucketHash := headers.Get("X-RateLimit-Bucket")
+
+	// Register the bucket hash if provided by Discord
+	if bucketHash != "" && b.ratelimiter != nil {
+		b.ratelimiter.Lock()
+		b.ratelimiter.bucketHashes[b.Key] = bucketHash
+		// Also register the bucket under the hash key if not already
+		if _, ok := b.ratelimiter.buckets[bucketHash]; !ok {
+			b.ratelimiter.buckets[bucketHash] = b
+		}
+		b.ratelimiter.Unlock()
+	}
 
 	// Update global and per bucket reset time if the proper headers are available
 	// If global is set, then it will block all buckets until after Retry-After

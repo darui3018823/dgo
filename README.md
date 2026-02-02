@@ -13,8 +13,11 @@ This fork addresses Discord's voice encryption protocol changes (XChaCha20-Poly1
 
 ### Key Changes
 - **Renamed to `dgo`**: The package and module name are now `dgo`.
-- **Root Directory**: Files are moved to the root of the repository.
-- **Modern CI**: Switched to GitHub Actions with `golangci-lint`.
+- **Discord API v10**: Updated to the latest Discord API version.
+- **Context Support**: `OpenWithContext` and cancellable rate limit waiting.
+- **Structured Logging**: Uses `log/slog` for modern, structured logging.
+- **Improved Rate Limiter**: Supports `X-RateLimit-Bucket` headers and context cancellation.
+- **Modern Go**: Requires Go 1.21+, uses `io.ReadAll` instead of deprecated `ioutil`.
 - **Voice Encryption**: Includes critical patches for `aead_xchacha20_poly1305_rtpsize`.
 
 ---

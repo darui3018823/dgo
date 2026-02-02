@@ -25,12 +25,10 @@ This fork addresses Discord's voice encryption protocol changes (XChaCha20-Poly1
 dgo is a [Go](https://golang.org/) package that provides low level 
 bindings to the [Discord](https://discord.com/) chat client API.
 
-If you would like to help the dgo package please use 
-[this link](https://discord.com/oauth2/authorize?client_id=173113690092994561&scope=bot)
-to add the official test bot **dgo** to your server.
+Contributions and feedback are welcome! Please open an issue or pull request on GitHub.
 
-**For help with this package or general Go discussion, please join the [Discord 
-Gophers](https://discord.gg/golang) chat server.**
+**For general Go discussion, please join the [Discord 
+Gophers](https://discord.gg/golang) chat server. For dgo-specific issues, please use [GitHub Issues](https://github.com/darui3018823/dgo/issues).**
 
 ## Getting Started
 

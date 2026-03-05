@@ -686,6 +686,34 @@ type Sticker struct {
 	SortValue   int           `json:"sort_value"`
 }
 
+// URL returns the CDN URL for the sticker media.
+func (s *Sticker) URL() string {
+	switch s.FormatType {
+	case StickerFormatTypeGIF:
+		return EndpointStickerAnimated(s.ID)
+	case StickerFormatTypeLottie:
+		return EndpointStickerLottie(s.ID)
+	default:
+		// PNG and APNG are both served via .png in the CDN endpoint.
+		return EndpointStickerImage(s.ID)
+	}
+}
+
+// GuildStickerCreate stores all parameters you can send with GuildStickerCreate.
+type GuildStickerCreate struct {
+	Name        string `json:"-"`
+	Description string `json:"-"`
+	Tags        string `json:"-"`
+	File        *File  `json:"-"`
+}
+
+// GuildStickerEdit stores all parameters you can send with GuildStickerEdit.
+type GuildStickerEdit struct {
+	Name        string  `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Tags        string  `json:"tags,omitempty"`
+}
+
 // StickerItem represents the smallest amount of data required to render a sticker. A partial sticker object.
 type StickerItem struct {
 	ID         string        `json:"id"`

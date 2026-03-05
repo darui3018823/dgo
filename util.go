@@ -76,6 +76,47 @@ func MultipartBodyWithJSON(data interface{}, files []*File) (requestContentType 
 	return bodywriter.FormDataContentType(), body.Bytes(), nil
 }
 
+// MultipartBodyWithFieldsAndFile returns the content type and body for multipart/form-data requests
+// that submit plain form fields plus a single file part.
+func MultipartBodyWithFieldsAndFile(fields map[string]string, fileFieldName string, file *File) (requestContentType string, requestBody []byte, err error) {
+	if file == nil {
+		return "", nil, fmt.Errorf("file can not be nil")
+	}
+
+	body := &bytes.Buffer{}
+	bodywriter := multipart.NewWriter(body)
+
+	for key, value := range fields {
+		if fieldErr := bodywriter.WriteField(key, value); fieldErr != nil {
+			return "", nil, fieldErr
+		}
+	}
+
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, quoteEscaper.Replace(fileFieldName), quoteEscaper.Replace(file.Name)))
+	contentType := file.ContentType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	h.Set("Content-Type", contentType)
+
+	p, createErr := bodywriter.CreatePart(h)
+	if createErr != nil {
+		return "", nil, createErr
+	}
+
+	if _, copyErr := io.Copy(p, file.Reader); copyErr != nil {
+		return "", nil, copyErr
+	}
+
+	err = bodywriter.Close()
+	if err != nil {
+		return "", nil, err
+	}
+
+	return bodywriter.FormDataContentType(), body.Bytes(), nil
+}
+
 func avatarURL(avatarHash, defaultAvatarURL, staticAvatarURL, animatedAvatarURL, size string) string {
 	var URL string
 	if avatarHash == "" {

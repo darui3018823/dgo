@@ -1497,6 +1497,113 @@ func (s *Session) GuildEmojiDelete(guildID, emojiID string, options ...RequestOp
 	return
 }
 
+// Sticker returns specified sticker.
+// stickerID : The ID of a Sticker to retrieve.
+func (s *Session) Sticker(stickerID string, options ...RequestOption) (sticker *Sticker, err error) {
+	var body []byte
+	body, err = s.RequestWithBucketID("GET", EndpointSticker(stickerID), nil, EndpointSticker(stickerID), options...)
+	if err != nil {
+		return
+	}
+
+	err = unmarshal(body, &sticker)
+	return
+}
+
+// NitroStickerPacks returns all available nitro sticker packs.
+func (s *Session) NitroStickerPacks(options ...RequestOption) (packs []*StickerPack, err error) {
+	body, err := s.RequestWithBucketID("GET", EndpointNitroStickersPacks, nil, EndpointNitroStickersPacks, options...)
+	if err != nil {
+		return
+	}
+
+	var temp struct {
+		StickerPacks []*StickerPack `json:"sticker_packs"`
+	}
+
+	err = unmarshal(body, &temp)
+	if err != nil {
+		return
+	}
+
+	packs = temp.StickerPacks
+	return
+}
+
+// GuildStickers returns all stickers for a guild.
+// guildID : The ID of a Guild.
+func (s *Session) GuildStickers(guildID string, options ...RequestOption) (stickers []*Sticker, err error) {
+	body, err := s.RequestWithBucketID("GET", EndpointGuildStickers(guildID), nil, EndpointGuildStickers(guildID), options...)
+	if err != nil {
+		return
+	}
+
+	err = unmarshal(body, &stickers)
+	return
+}
+
+// GuildSticker returns specified guild sticker.
+// guildID   : The ID of a Guild.
+// stickerID : The ID of a Sticker to retrieve.
+func (s *Session) GuildSticker(guildID, stickerID string, options ...RequestOption) (sticker *Sticker, err error) {
+	var body []byte
+	body, err = s.RequestWithBucketID("GET", EndpointGuildSticker(guildID, stickerID), nil, EndpointGuildSticker(guildID, stickerID), options...)
+	if err != nil {
+		return
+	}
+
+	err = unmarshal(body, &sticker)
+	return
+}
+
+// GuildStickerCreate creates a new sticker for the given guild.
+// guildID : The ID of a Guild.
+// data    : New sticker data and file.
+func (s *Session) GuildStickerCreate(guildID string, data *GuildStickerCreate, options ...RequestOption) (sticker *Sticker, err error) {
+	if data == nil {
+		return nil, fmt.Errorf("data can not be nil")
+	}
+
+	contentType, body, encodeErr := MultipartBodyWithFieldsAndFile(map[string]string{
+		"name":        data.Name,
+		"description": data.Description,
+		"tags":        data.Tags,
+	}, "file", data.File)
+	if encodeErr != nil {
+		return nil, encodeErr
+	}
+
+	response, err := s.RequestRaw("POST", EndpointGuildStickers(guildID), contentType, body, EndpointGuildStickers(guildID), 0, options...)
+	if err != nil {
+		return
+	}
+
+	err = unmarshal(response, &sticker)
+	return
+}
+
+// GuildStickerEdit modifies and returns updated guild sticker.
+// guildID   : The ID of a Guild.
+// stickerID : The ID of a Sticker.
+// data      : Updated sticker data.
+func (s *Session) GuildStickerEdit(guildID, stickerID string, data *GuildStickerEdit, options ...RequestOption) (sticker *Sticker, err error) {
+	body, err := s.RequestWithBucketID("PATCH", EndpointGuildSticker(guildID, stickerID), data, EndpointGuildStickers(guildID), options...)
+	if err != nil {
+		return
+	}
+
+	err = unmarshal(body, &sticker)
+	return
+}
+
+// GuildStickerDelete deletes a guild sticker.
+// guildID   : The ID of a Guild.
+// stickerID : The ID of a Sticker.
+func (s *Session) GuildStickerDelete(guildID, stickerID string, options ...RequestOption) (err error) {
+	_, err = s.RequestWithBucketID("DELETE", EndpointGuildSticker(guildID, stickerID), nil, EndpointGuildStickers(guildID), options...)
+	return
+}
+
 // ApplicationEmojis returns all emojis for the given application
 // appID : ID of the application
 func (s *Session) ApplicationEmojis(appID string, options ...RequestOption) (emojis []*Emoji, err error) {

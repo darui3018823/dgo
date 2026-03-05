@@ -150,6 +150,9 @@ var (
 	EndpointGroupIcon = func(cID, hash string) string { return EndpointCDNChannelIcons + cID + "/" + hash + ".png" }
 
 	EndpointSticker            = func(sID string) string { return EndpointStickers + sID }
+	EndpointStickerImage       = func(sID string) string { return EndpointCDN + "stickers/" + sID + ".png" }
+	EndpointStickerAnimated    = func(sID string) string { return EndpointCDN + "stickers/" + sID + ".gif" }
+	EndpointStickerLottie      = func(sID string) string { return EndpointCDN + "stickers/" + sID + ".json" }
 	EndpointNitroStickersPacks = EndpointAPI + "/sticker-packs"
 
 	EndpointChannelWebhooks = func(cID string) string { return EndpointChannel(cID) + "/webhooks" }

@@ -11,6 +11,36 @@ import (
 	"testing"
 )
 
+func TestSticker_URL(t *testing.T) {
+	t.Run("png", func(t *testing.T) {
+		s := &Sticker{ID: "123", FormatType: StickerFormatTypePNG}
+		if got, want := s.URL(), "https://cdn.discordapp.com/stickers/123.png"; got != want {
+			t.Errorf("Sticker.URL() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("apng", func(t *testing.T) {
+		s := &Sticker{ID: "123", FormatType: StickerFormatTypeAPNG}
+		if got, want := s.URL(), "https://cdn.discordapp.com/stickers/123.png"; got != want {
+			t.Errorf("Sticker.URL() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("gif", func(t *testing.T) {
+		s := &Sticker{ID: "123", FormatType: StickerFormatTypeGIF}
+		if got, want := s.URL(), "https://cdn.discordapp.com/stickers/123.gif"; got != want {
+			t.Errorf("Sticker.URL() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("lottie", func(t *testing.T) {
+		s := &Sticker{ID: "123", FormatType: StickerFormatTypeLottie}
+		if got, want := s.URL(), "https://cdn.discordapp.com/stickers/123.json"; got != want {
+			t.Errorf("Sticker.URL() = %q, want %q", got, want)
+		}
+	})
+}
+
 func TestMember_DisplayName(t *testing.T) {
 	user := &User{
 		GlobalName: "Global",

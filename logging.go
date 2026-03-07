@@ -74,7 +74,11 @@ func msglog(msgL, caller int, format string, a ...interface{}) {
 // if the session log level is equal or higher than the
 // message log level
 func (s *Session) log(msgL int, format string, a ...interface{}) {
-	s.RLock()
+	// Open() and other major methods can call log() while holding Session's write lock.
+	// Using TryRLock avoids a self-deadlock in that case and safely skips the log entry.
+	if !s.TryRLock() {
+		return
+	}
 	logger := s.Logger
 	s.RUnlock()
 

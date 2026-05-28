@@ -323,9 +323,14 @@ func (v *VoiceConnection) open() (err error) {
 		".discordsays.com",        // Voice channels
 	}
 
+	endpointHost := v.endpoint
+	if host, _, err := net.SplitHostPort(v.endpoint); err == nil {
+		endpointHost = host
+	}
+
 	isValid := false
 	for _, domain := range allowedDomains {
-		if strings.HasSuffix(v.endpoint, domain) {
+		if strings.HasSuffix(endpointHost, domain) {
 			isValid = true
 			break
 		}

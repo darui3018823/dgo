@@ -1,5 +1,7 @@
 package dgo
 
+// DAVE support adapted from bwmarrin/discordgo PRs #1701 and #1704.
+
 import (
 	"crypto/aes"
 	"crypto/cipher"

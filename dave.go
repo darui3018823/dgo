@@ -1,5 +1,7 @@
 package dgo
 
+// DAVE support adapted from bwmarrin/discordgo PRs #1701 and #1704.
+
 import (
 	"crypto/aes"
 	"crypto/cipher"
@@ -24,7 +26,6 @@ type daveReceiver struct {
 
 type DAVESession struct {
 	mu                  sync.Mutex
-	protocolVersion     int
 	epoch               uint64
 	pendingTransitionID uint16
 	pendingVersion      int

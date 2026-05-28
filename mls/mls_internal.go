@@ -1,5 +1,7 @@
 package mls
 
+// MLS helpers adapted from bwmarrin/discordgo PRs #1701 and #1704.
+
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -23,12 +25,6 @@ func (w *tlsWriter) writeUint8(v uint8) {
 
 func (w *tlsWriter) writeUint16(v uint16) {
 	w.buf = append(w.buf, byte(v>>8), byte(v))
-}
-
-func (w *tlsWriter) writeUint32(v uint32) {
-	b := make([]byte, 4)
-	binary.BigEndian.PutUint32(b, v)
-	w.buf = append(w.buf, b...)
 }
 
 func (w *tlsWriter) writeUint64(v uint64) {
@@ -94,16 +90,6 @@ func (r *tlsReader) readUint16() uint16 {
 	}
 	v := binary.BigEndian.Uint16(r.data[r.pos:])
 	r.pos += 2
-	return v
-}
-
-func (r *tlsReader) readUint32() uint32 {
-	if r.err != nil || r.pos+4 > len(r.data) {
-		r.err = fmt.Errorf("tlsReader: short read uint32 at pos %d", r.pos)
-		return 0
-	}
-	v := binary.BigEndian.Uint32(r.data[r.pos:])
-	r.pos += 4
 	return v
 }
 
@@ -175,35 +161,6 @@ func (r *tlsReader) readVarint() uint64 {
 	}
 }
 
-func (r *tlsReader) readRaw(n int) []byte {
-	if r.err != nil || r.pos+n > len(r.data) {
-		r.err = fmt.Errorf("tlsReader: short read raw(%d) at pos %d", n, r.pos)
-		return nil
-	}
-	out := make([]byte, n)
-	copy(out, r.data[r.pos:r.pos+n])
-	r.pos += n
-	return out
-}
-
-func (r *tlsReader) readRemaining() []byte {
-	if r.err != nil {
-		return nil
-	}
-	out := make([]byte, len(r.data)-r.pos)
-	copy(out, r.data[r.pos:])
-	r.pos = len(r.data)
-	return out
-}
-
-func (r *tlsReader) skip(n int) {
-	if r.err != nil || r.pos+n > len(r.data) {
-		r.err = fmt.Errorf("tlsReader: short skip(%d) at pos %d", n, r.pos)
-		return
-	}
-	r.pos += n
-}
-
 type hpkeKeyPair struct {
 	pub  []byte
 	priv []byte
@@ -262,7 +219,10 @@ func generateSignatureKeyPair() (*signatureKeyPair, error) {
 	if err != nil {
 		return nil, fmt.Errorf("generating ECDSA key: %w", err)
 	}
-	pub := elliptic.Marshal(elliptic.P256(), priv.PublicKey.X, priv.PublicKey.Y)
+	pub := make([]byte, 1, 65)
+	pub[0] = 4
+	pub = append(pub, priv.PublicKey.X.FillBytes(make([]byte, 32))...)
+	pub = append(pub, priv.PublicKey.Y.FillBytes(make([]byte, 32))...)
 	return &signatureKeyPair{pub: pub, priv: priv}, nil
 }
 

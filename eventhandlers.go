@@ -77,6 +77,7 @@ const (
 	threadUpdateEventType                        = "THREAD_UPDATE"
 	typingStartEventType                         = "TYPING_START"
 	userUpdateEventType                          = "USER_UPDATE"
+	voiceChannelStartTimeUpdateEventType         = "VOICE_CHANNEL_START_TIME_UPDATE"
 	voiceServerUpdateEventType                   = "VOICE_SERVER_UPDATE"
 	voiceStateUpdateEventType                    = "VOICE_STATE_UPDATE"
 	webhooksUpdateEventType                      = "WEBHOOKS_UPDATE"
@@ -1462,6 +1463,26 @@ func (eh userUpdateEventHandler) Handle(s *Session, i interface{}) {
 	}
 }
 
+// voiceChannelStartTimeUpdateEventHandler is an event handler for VoiceChannelStartTimeUpdate events.
+type voiceChannelStartTimeUpdateEventHandler func(*Session, *VoiceChannelStartTimeUpdate)
+
+// Type returns the event type for VoiceChannelStartTimeUpdate events.
+func (eh voiceChannelStartTimeUpdateEventHandler) Type() string {
+	return voiceChannelStartTimeUpdateEventType
+}
+
+// New returns a new instance of VoiceChannelStartTimeUpdate.
+func (eh voiceChannelStartTimeUpdateEventHandler) New() interface{} {
+	return &VoiceChannelStartTimeUpdate{}
+}
+
+// Handle is the handler for VoiceChannelStartTimeUpdate events.
+func (eh voiceChannelStartTimeUpdateEventHandler) Handle(s *Session, i interface{}) {
+	if t, ok := i.(*VoiceChannelStartTimeUpdate); ok {
+		eh(s, t)
+	}
+}
+
 // voiceServerUpdateEventHandler is an event handler for VoiceServerUpdate events.
 type voiceServerUpdateEventHandler func(*Session, *VoiceServerUpdate)
 
@@ -1666,6 +1687,8 @@ func handlerForInterface(handler interface{}) EventHandler {
 		return typingStartEventHandler(v)
 	case func(*Session, *UserUpdate):
 		return userUpdateEventHandler(v)
+	case func(*Session, *VoiceChannelStartTimeUpdate):
+		return voiceChannelStartTimeUpdateEventHandler(v)
 	case func(*Session, *VoiceServerUpdate):
 		return voiceServerUpdateEventHandler(v)
 	case func(*Session, *VoiceStateUpdate):
@@ -1744,6 +1767,7 @@ func init() {
 	registerInterfaceProvider(threadUpdateEventHandler(nil))
 	registerInterfaceProvider(typingStartEventHandler(nil))
 	registerInterfaceProvider(userUpdateEventHandler(nil))
+	registerInterfaceProvider(voiceChannelStartTimeUpdateEventHandler(nil))
 	registerInterfaceProvider(voiceServerUpdateEventHandler(nil))
 	registerInterfaceProvider(voiceStateUpdateEventHandler(nil))
 	registerInterfaceProvider(webhooksUpdateEventHandler(nil))

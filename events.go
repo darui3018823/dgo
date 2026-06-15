@@ -363,6 +363,13 @@ type VoiceChannelStartTimeUpdate struct {
 	VoiceStartTime int64  `json:"voice_start_time"`
 }
 
+// VoiceChannelStatusUpdate is the data for a VoiceChannelStatusUpdate event.
+type VoiceChannelStatusUpdate struct {
+	ID      string  `json:"id"`
+	GuildID string  `json:"guild_id"`
+	Status  *string `json:"status"`
+}
+
 // MessageDeleteBulk is the data for a MessageDeleteBulk event
 type MessageDeleteBulk struct {
 	Messages  []string `json:"ids"`

@@ -1,33 +1,32 @@
-## DiscordGo
-<hr>
-<img align="right" src="https://github.com/darui3018823/discordgo/blob/master/docs/img/discordgo.png">
+# dgo
 
-[Go](https://golang.org/) (Golang) interface for the [Discord](https://discord.com/) 
-chat service.  Provides both low-level direct bindings to the 
-Discord API and helper functions that allow you to make custom clients and chat 
-bot applications easily.
+<img align="right" alt="dgo project mark" src="img/discordgo.svg" width="200">
 
-[Discord](https://discord.com/) is an all-in-one voice and text chat for 
-gamers that's free, secure, and works on both your desktop and phone. 
+dgo provides Go bindings for Discord's REST, Gateway, and Voice APIs. It
+supports low-level protocol access together with helpers for bot sessions,
+event handling, state tracking, rate limiting, interactions, and voice.
 
-### Why DiscordGo?
-* High Performance
-* Minimal Memory & CPU Load
-* Low-level bindings to Discord REST API Endpoints
-* Support for the data websocket interface
-* Multi-Server voice connections (send and receive)
-* State tracking and caching
+dgo is an independent hard fork of
+[bwmarrin/discordgo](https://github.com/bwmarrin/discordgo). Use the dgo module
+path, documentation, and issue tracker when working with this repository.
 
-### Learn More
-* Check out the [Getting Started](GettingStarted.md) section
-* Read the reference docs on [Godoc](https://godoc.org/github.com/darui3018823/discordgo) or [GoWalker](https://gowalker.org/github.com/darui3018823/discordgo)
-* Try the [examples](https://github.com/darui3018823/discordgo/tree/master/examples)
-* Explore [Awesome DiscordGo](https://github.com/darui3018823/discordgo/wiki/Awesome-DiscordGo)
+## Start here
 
-### Join Us!
-Both of the below links take you to chat channels where you can get more 
-information and support for DiscordGo.  There's also a chance to make some 
-friends :).
+- [Getting started](GettingStarted.md)
+- [Migration, compatibility, and deprecation policy](Migration.md)
+- [Public API inventory](API.md)
+- [Package reference](https://pkg.go.dev/github.com/darui3018823/dgo)
+- [Examples](../examples)
 
-* Join the [Discord Gophers](https://discord.gg/0f1SbxBZjYoCtNPP) chat server dedicated to Go programming.
-* Join the [Discord API](https://discord.com/invite/discord-API) chat server dedicated to the Discord API.
+## Design goals
+
+- Correct implementation of current public Discord APIs
+- Safe handling of credentials, rate limits, and event concurrency
+- Explicit Gateway intents and mention behavior
+- Voice transport and DAVE interoperability
+- Predictable compatibility and deprecation guidance
+
+For dgo-specific support, use
+[GitHub Issues](https://github.com/darui3018823/dgo/issues). The
+[Discord Gophers](https://discord.gg/golang) community is available for
+general Go discussion.

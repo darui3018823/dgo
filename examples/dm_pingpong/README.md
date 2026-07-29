@@ -1,20 +1,20 @@
-<img align="right" alt="DiscordGo logo" src="/docs/img/discordgo.svg" width="200">
+<img align="right" alt="dgo project mark" src="../../docs/img/discordgo.svg" width="200">
 
-## DiscordGo Direct Message Ping Pong Example
+## dgo direct message ping-pong example
 
-This example demonstrates how to utilize DiscordGo to create a Ping Pong Bot
+This example demonstrates how to use dgo to create a ping-pong bot
 that sends the response through Direct Message.
 
 This Bot will respond to "ping" in any server it's in with "Pong!" in the
 sender's DM.
 
-**Join [Discord Gophers](https://discord.gg/0f1SbxBZjYoCtNPP)
-Discord chat channel for support.**
+For dgo-specific problems, use [GitHub Issues](https://github.com/darui3018823/dgo/issues).
+For general Go discussion, visit [Discord Gophers](https://discord.gg/golang).
 
 ### Build
 
 This assumes you already have a working Go environment setup and that
-DiscordGo is correctly installed on your system.
+Go 1.24 or newer and the module dependencies are available.
 
 From within the dm_pingpong example folder, run the below command to compile the
 example.
@@ -25,8 +25,8 @@ go build
 
 ### Usage
 
-This example uses bot tokens for authentication only. While user/password is
-supported by DiscordGo, it is not recommended for bots.
+This example supports bot tokens only. Automated user accounts and raw user
+credentials are prohibited and are not supported by dgo.
 
 ```
 ./dm_pingpong --help

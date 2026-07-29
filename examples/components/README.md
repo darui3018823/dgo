@@ -1,18 +1,18 @@
-<img align="right" alt="DiscordGo logo" src="/docs/img/discordgo.svg" width="200">
+<img align="right" alt="dgo project mark" src="../../docs/img/discordgo.svg" width="200">
 
-## DiscordGo Components Example
+## dgo components example
 
-This example demonstrates how to utilize DiscordGo to create and use message
+This example demonstrates how to use dgo to create and use message
 components, such as buttons and select menus. For usage of the text input
 component and modals, please refer to the `modals` example.
 
-**Join [Discord Gophers](https://discord.gg/0f1SbxBZjYoCtNPP)
-Discord chat channel for support.**
+For dgo-specific problems, use [GitHub Issues](https://github.com/darui3018823/dgo/issues).
+For general Go discussion, visit [Discord Gophers](https://discord.gg/golang).
 
 ### Build
 
 This assumes you already have a working Go environment setup and that
-DiscordGo is correctly installed on your system.
+Go 1.24 or newer and the module dependencies are available.
 
 From within the components example folder, run the below command to compile the
 example.

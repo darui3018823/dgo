@@ -1,4 +1,4 @@
-<img align="right" alt="DiscordGo logo" src="/docs/img/discordgo.svg" width="200">
+<img align="right" alt="dgo project mark" src="../../docs/img/discordgo.svg" width="200">
 
 ## dgo Voice Receive Example
 
@@ -39,12 +39,12 @@ This example makes heavy use of the [Pion](https://github.com/pion) family of li
 Go check them out for anything to do with voice, video or WebRTC; it's a great
 group of people maintaining the project!
 
-Please note that voice receive is **not** officially supported, any may break
+Please note that voice receive is **not** officially supported and may break
 at essentially any time (and has in the past). This code works at the time of
 its writing, but YMMV in the future.
 
-**Join [Discord Gophers](https://discord.gg/0f1SbxBZjYoCtNPP)
-Discord chat channel for support.**
+For dgo-specific problems, use [GitHub Issues](https://github.com/darui3018823/dgo/issues).
+For general Go discussion, visit [Discord Gophers](https://discord.gg/golang).
 
 ### Build
 

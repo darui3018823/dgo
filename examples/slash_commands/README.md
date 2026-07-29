@@ -1,19 +1,19 @@
-<img align="right" alt="DiscordGo logo" src="/docs/img/discordgo.svg" width="200">
+<img align="right" alt="dgo project mark" src="../../docs/img/discordgo.svg" width="200">
 
-## DiscordGo Slash Commands Example
+## dgo slash commands example
 
-This example demonstrates how to utilize DiscordGo to create a Slash Command based bot,
+This example demonstrates how to use dgo to create a slash-command bot,
 which would be able to listen and respond to interactions. This example covers all aspects
 of slash command interactions: options, choices, responses and followup messages.
 To avoid confusion, this example is more of a **step-by-step tutorial**, than a demonstration bot.
 
-**Join [Discord Gophers](https://discord.gg/0f1SbxBZjYoCtNPP)
-Discord chat channel for support.**
+For dgo-specific problems, use [GitHub Issues](https://github.com/darui3018823/dgo/issues).
+For general Go discussion, visit [Discord Gophers](https://discord.gg/golang).
 
 ### Build
 
 This assumes you already have a working Go environment setup and that
-DiscordGo is correctly installed on your system.
+Go 1.24 or newer and the module dependencies are available.
 
 From within the slash_commands example folder, run the below command to compile the
 example.

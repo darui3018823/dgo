@@ -158,6 +158,11 @@ type Session struct {
 
 	// used to make sure gateway websocket writes do not happen concurrently
 	wsMutex sync.Mutex
+
+	// Tracks Discord's per-guild cooldown for opcode 8 requests that ask for
+	// the complete member list.
+	guildMembersRequestMu sync.Mutex
+	guildMembersRequests  map[string]time.Time
 }
 
 // ApplicationIntegrationType dictates where application can be installed and its available interaction contexts.

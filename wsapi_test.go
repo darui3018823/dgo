@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -109,6 +110,115 @@ func TestRequestChannelInfoPayload(t *testing.T) {
 	}
 	if err = session.RequestChannelInfo("guild", "future"); err == nil {
 		t.Fatal("accepted unsupported field")
+	}
+}
+
+func TestRequestGuildMembersUsesSingleGuildPayload(t *testing.T) {
+	query := ""
+	payload := requestGuildMembersOp{
+		Op: 8,
+		Data: requestGuildMembersData{
+			GuildID:   "41771983444115456",
+			Query:     &query,
+			Limit:     0,
+			Nonce:     "request",
+			Presences: false,
+		},
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"op":8,"d":{"guild_id":"41771983444115456","query":"","limit":0,"nonce":"request","presences":false}}`
+	if string(data) != want {
+		t.Fatalf("payload = %s, want %s", data, want)
+	}
+}
+
+func TestRequestGuildMembersValidation(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err = session.RequestGuildMembers("guild", "prefix", 100, "", false); !errors.Is(err, ErrWSNotFound) {
+		t.Fatalf("valid prefix request error = %v, want ErrWSNotFound", err)
+	}
+	if err = session.RequestGuildMembers("guild", "", 0, "", false); err == nil ||
+		!strings.Contains(err.Error(), "GUILD_MEMBERS") {
+		t.Fatalf("all-member request error = %v, want missing GUILD_MEMBERS intent", err)
+	}
+
+	session.Identify.Intents = IntentGuildMembers
+	if err = session.RequestGuildMembers("guild", "", 0, "", false); !errors.Is(err, ErrWSNotFound) {
+		t.Fatalf("valid all-member request error = %v, want ErrWSNotFound", err)
+	}
+	if err = session.RequestGuildMembers("guild", "prefix", 1, "", true); err == nil ||
+		!strings.Contains(err.Error(), "GUILD_PRESENCES") {
+		t.Fatalf("presence request error = %v, want missing GUILD_PRESENCES intent", err)
+	}
+
+	session.Identify.Intents |= IntentGuildPresences
+	if err = session.RequestGuildMembers("guild", "prefix", 101, "", true); err == nil {
+		t.Fatal("accepted a query limit above 100")
+	}
+	if err = session.RequestGuildMembers("guild", "prefix", 1, strings.Repeat("n", 33), true); err == nil {
+		t.Fatal("accepted a nonce above 32 bytes")
+	}
+	if err = session.RequestGuildMembers("", "prefix", 1, "", false); err == nil {
+		t.Fatal("accepted an empty guild ID")
+	}
+	if err = session.RequestGuildMembersList("guild", nil, 0, "", false); err == nil {
+		t.Fatal("accepted an empty user ID list")
+	}
+	if err = session.RequestGuildMembersList("guild", []string{""}, 0, "", false); err == nil {
+		t.Fatal("accepted an empty user ID")
+	}
+	if err = session.RequestGuildMembersList("guild", make([]string, 101), 0, "", false); err == nil {
+		t.Fatal("accepted more than 100 user IDs")
+	}
+	if err = session.RequestGuildMembersBatch([]string{"one", "two"}, "prefix", 1, "", false); err == nil {
+		t.Fatal("accepted multiple guild IDs")
+	}
+	if err = session.RequestGuildMembersBatchList(nil, []string{"user"}, 0, "", false); err == nil {
+		t.Fatal("accepted no guild IDs")
+	}
+}
+
+func TestAllGuildMembersRequestCooldown(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(100, 0)
+
+	first, err := session.reserveAllGuildMembersRequest("guild", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != now {
+		t.Fatalf("reservation = %v, want %v", first, now)
+	}
+	_, err = session.reserveAllGuildMembersRequest("guild", now.Add(10*time.Second))
+	var limited *GuildMembersRequestRateLimitError
+	if !errors.As(err, &limited) {
+		t.Fatalf("second reservation error = %v, want GuildMembersRequestRateLimitError", err)
+	}
+	if limited.GuildID != "guild" || limited.RetryAfter != 20*time.Second {
+		t.Fatalf("rate limit error = %#v", limited)
+	}
+	if _, err = session.reserveAllGuildMembersRequest("other", now.Add(10*time.Second)); err != nil {
+		t.Fatalf("different guild reservation error = %v", err)
+	}
+	if _, err = session.reserveAllGuildMembersRequest("guild", now.Add(30*time.Second)); err != nil {
+		t.Fatalf("reservation after cooldown error = %v", err)
+	}
+
+	reservation := now.Add(31 * time.Second)
+	session.guildMembersRequests["rollback"] = reservation
+	session.releaseAllGuildMembersRequest("rollback", reservation)
+	if _, ok := session.guildMembersRequests["rollback"]; ok {
+		t.Fatal("failed request reservation was not released")
 	}
 }
 

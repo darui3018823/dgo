@@ -42,6 +42,18 @@ var ErrWSShardBounds = errors.New("ShardID must be less than ShardCount")
 // Gateway. OAuth2 bearer tokens are supported by REST endpoints only.
 var ErrWSInvalidToken = errors.New("gateway connections require a token prefixed with \"Bot \"")
 
+// GuildMembersRequestRateLimitError is returned before sending a request for
+// all guild members when Discord's per-guild, per-bot cooldown is still active.
+type GuildMembersRequestRateLimitError struct {
+	GuildID    string
+	RetryAfter time.Duration
+}
+
+// Error implements error.
+func (e *GuildMembersRequestRateLimitError) Error() string {
+	return fmt.Sprintf("requesting all members for guild %s is rate limited for %s", e.GuildID, e.RetryAfter)
+}
+
 type resumePacket struct {
 	Op   int `json:"op"`
 	Data struct {
@@ -458,8 +470,7 @@ func (s *Session) UpdateStatusComplex(usd UpdateStatusData) (err error) {
 }
 
 type requestGuildMembersData struct {
-	// TODO: Deprecated. Use string instead of []string
-	GuildIDs  []string  `json:"guild_id"`
+	GuildID   string    `json:"guild_id"`
 	Query     *string   `json:"query,omitempty"`
 	UserIDs   *[]string `json:"user_ids,omitempty"`
 	Limit     int       `json:"limit"`
@@ -530,7 +541,14 @@ func (s *Session) RequestChannelInfo(guildID string, fields ...ChannelInfoField)
 // nonce     : Nonce to identify the Guild Members Chunk response
 // presences : Whether to request presences of guild members
 func (s *Session) RequestGuildMembers(guildID, query string, limit int, nonce string, presences bool) error {
-	return s.RequestGuildMembersBatch([]string{guildID}, query, limit, nonce, presences)
+	data := requestGuildMembersData{
+		GuildID:   guildID,
+		Query:     &query,
+		Limit:     limit,
+		Nonce:     nonce,
+		Presences: presences,
+	}
+	return s.requestGuildMembers(data)
 }
 
 // RequestGuildMembersList requests guild members from the gateway
@@ -541,7 +559,14 @@ func (s *Session) RequestGuildMembers(guildID, query string, limit int, nonce st
 // nonce     : Nonce to identify the Guild Members Chunk response
 // presences : Whether to request presences of guild members
 func (s *Session) RequestGuildMembersList(guildID string, userIDs []string, limit int, nonce string, presences bool) error {
-	return s.RequestGuildMembersBatchList([]string{guildID}, userIDs, limit, nonce, presences)
+	data := requestGuildMembersData{
+		GuildID:   guildID,
+		UserIDs:   &userIDs,
+		Limit:     limit,
+		Nonce:     nonce,
+		Presences: presences,
+	}
+	return s.requestGuildMembers(data)
 }
 
 // RequestGuildMembersBatch requests guild members from the gateway
@@ -554,15 +579,10 @@ func (s *Session) RequestGuildMembersList(guildID string, userIDs []string, limi
 //
 // NOTE: this function is deprecated, please use RequestGuildMembers instead
 func (s *Session) RequestGuildMembersBatch(guildIDs []string, query string, limit int, nonce string, presences bool) (err error) {
-	data := requestGuildMembersData{
-		GuildIDs:  guildIDs,
-		Query:     &query,
-		Limit:     limit,
-		Nonce:     nonce,
-		Presences: presences,
+	if len(guildIDs) != 1 {
+		return fmt.Errorf("request guild members accepts exactly one guild ID, got %d", len(guildIDs))
 	}
-	err = s.requestGuildMembers(data)
-	return
+	return s.RequestGuildMembers(guildIDs[0], query, limit, nonce, presences)
 }
 
 // RequestGuildMembersBatchList requests guild members from the gateway
@@ -575,15 +595,10 @@ func (s *Session) RequestGuildMembersBatch(guildIDs []string, query string, limi
 //
 // NOTE: this function is deprecated, please use RequestGuildMembersList instead
 func (s *Session) RequestGuildMembersBatchList(guildIDs []string, userIDs []string, limit int, nonce string, presences bool) (err error) {
-	data := requestGuildMembersData{
-		GuildIDs:  guildIDs,
-		UserIDs:   &userIDs,
-		Limit:     limit,
-		Nonce:     nonce,
-		Presences: presences,
+	if len(guildIDs) != 1 {
+		return fmt.Errorf("request guild members accepts exactly one guild ID, got %d", len(guildIDs))
 	}
-	err = s.requestGuildMembers(data)
-	return
+	return s.RequestGuildMembersList(guildIDs[0], userIDs, limit, nonce, presences)
 }
 
 // GatewayWriteStruct allows for sending raw gateway structs over the gateway.
@@ -604,17 +619,105 @@ func (s *Session) GatewayWriteStruct(data interface{}) (err error) {
 func (s *Session) requestGuildMembers(data requestGuildMembersData) (err error) {
 	s.log(LogInformational, "called")
 
+	if err = s.validateGuildMembersRequest(data); err != nil {
+		return err
+	}
+
 	s.RLock()
 	defer s.RUnlock()
 	if s.wsConn == nil {
 		return ErrWSNotFound
 	}
 
+	var reservation time.Time
+	if requestsAllGuildMembers(data) {
+		reservation, err = s.reserveAllGuildMembersRequest(data.GuildID, time.Now())
+		if err != nil {
+			return err
+		}
+	}
+
 	s.wsMutex.Lock()
 	err = s.wsConn.WriteJSON(requestGuildMembersOp{8, data})
 	s.wsMutex.Unlock()
+	if err != nil && !reservation.IsZero() {
+		s.releaseAllGuildMembersRequest(data.GuildID, reservation)
+	}
 
 	return
+}
+
+func (s *Session) validateGuildMembersRequest(data requestGuildMembersData) error {
+	if data.GuildID == "" {
+		return errors.New("guild ID is required")
+	}
+	if (data.Query == nil) == (data.UserIDs == nil) {
+		return errors.New("exactly one of query or user IDs is required")
+	}
+	if data.Limit < 0 || data.Limit > 100 {
+		return fmt.Errorf("member request limit must be between 0 and 100, got %d", data.Limit)
+	}
+	if len(data.Nonce) > 32 {
+		return fmt.Errorf("member request nonce must not exceed 32 bytes, got %d", len(data.Nonce))
+	}
+	if data.UserIDs != nil {
+		if len(*data.UserIDs) == 0 || len(*data.UserIDs) > 100 {
+			return fmt.Errorf("member request must include between 1 and 100 user IDs, got %d", len(*data.UserIDs))
+		}
+		for _, userID := range *data.UserIDs {
+			if userID == "" {
+				return errors.New("member request user IDs must not be empty")
+			}
+		}
+	}
+
+	s.RLock()
+	intents := s.Identify.Intents
+	s.RUnlock()
+	if data.Presences && intents&IntentGuildPresences == 0 {
+		return errors.New("requesting member presences requires the GUILD_PRESENCES intent")
+	}
+	if requestsAllGuildMembers(data) && intents&IntentGuildMembers == 0 {
+		return errors.New("requesting all guild members requires the GUILD_MEMBERS intent")
+	}
+	return nil
+}
+
+func requestsAllGuildMembers(data requestGuildMembersData) bool {
+	return data.Query != nil && *data.Query == "" && data.Limit == 0
+}
+
+func (s *Session) reserveAllGuildMembersRequest(guildID string, now time.Time) (time.Time, error) {
+	const cooldown = 30 * time.Second
+
+	s.guildMembersRequestMu.Lock()
+	defer s.guildMembersRequestMu.Unlock()
+	if last, ok := s.guildMembersRequests[guildID]; ok {
+		if retryAfter := cooldown - now.Sub(last); retryAfter > 0 {
+			return time.Time{}, &GuildMembersRequestRateLimitError{
+				GuildID:    guildID,
+				RetryAfter: retryAfter,
+			}
+		}
+	}
+	if s.guildMembersRequests == nil {
+		s.guildMembersRequests = make(map[string]time.Time)
+	}
+	for id, requestedAt := range s.guildMembersRequests {
+		if now.Sub(requestedAt) >= cooldown {
+			delete(s.guildMembersRequests, id)
+		}
+	}
+	s.guildMembersRequests[guildID] = now
+	return now, nil
+}
+
+func (s *Session) releaseAllGuildMembersRequest(guildID string, reservation time.Time) {
+	s.guildMembersRequestMu.Lock()
+	if s.guildMembersRequests[guildID] == reservation {
+		delete(s.guildMembersRequests, guildID)
+	}
+	s.guildMembersRequestMu.Unlock()
 }
 
 // onEvent is the "event handler" for all messages received on the

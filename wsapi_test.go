@@ -1,11 +1,31 @@
 package dgo
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/websocket"
 )
+
+func TestOnEventLogsZlibError(t *testing.T) {
+	s, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	s.Logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	_, err = s.onEvent(websocket.BinaryMessage, []byte("not zlib"))
+	if err == nil {
+		t.Fatal("onEvent accepted malformed zlib data")
+	}
+	if got := logs.String(); !strings.Contains(got, err.Error()) || strings.Contains(got, "<nil>") {
+		t.Fatalf("zlib log = %q, want actual error %q", got, err)
+	}
+}
 
 func TestOpenRejectsNonBotCredentials(t *testing.T) {
 	tests := []string{

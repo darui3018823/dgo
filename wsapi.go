@@ -586,14 +586,14 @@ func (s *Session) onEvent(messageType int, message []byte) (*Event, error) {
 
 		z, err2 := zlib.NewReader(reader)
 		if err2 != nil {
-			s.log(LogError, "error uncompressing websocket message, %s", err)
+			s.log(LogError, "error uncompressing websocket message, %s", err2)
 			return nil, err2
 		}
 
 		defer func() {
 			err3 := z.Close()
 			if err3 != nil {
-				s.log(LogWarning, "error closing zlib, %s", err)
+				s.log(LogWarning, "error closing zlib, %s", err3)
 			}
 		}()
 

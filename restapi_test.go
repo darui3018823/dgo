@@ -1054,6 +1054,43 @@ func TestRequestRawValidatesInputsAndAppliesOptionsOnce(t *testing.T) {
 	}
 }
 
+func TestGuildEditDoesNotFetchVoiceRegions(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Ratelimiter.GlobalRateLimit = 0
+	requests := 0
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		if request.Method != http.MethodPatch || request.URL.String() != EndpointGuild("guild") {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL)
+		}
+		var params GuildParams
+		if err := json.NewDecoder(request.Body).Decode(&params); err != nil {
+			t.Fatal(err)
+		}
+		if params.Region != "legacy-region" {
+			t.Fatalf("region = %q, want legacy-region", params.Region)
+		}
+		return jsonResponse(http.StatusOK, `{"id":"guild"}`), nil
+	})
+
+	guild, err := session.GuildEdit("guild", &GuildParams{Region: "legacy-region"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if guild.ID != "guild" {
+		t.Fatalf("guild = %#v", guild)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want one PATCH and no region lookup", requests)
+	}
+	if _, err := session.GuildEdit("guild", nil); err == nil {
+		t.Fatal("expected nil parameters error")
+	}
+}
+
 func TestRequestRawBoundsRateLimitRetriesAndClosesBodies(t *testing.T) {
 	session, err := New("Bot token")
 	if err != nil {

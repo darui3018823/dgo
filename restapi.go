@@ -1237,35 +1237,17 @@ func (s *Session) GuildCreate(name string, options ...RequestOption) (st *Guild,
 	return nil, ErrGuildCreateUnsupported
 }
 
-// GuildEdit edits a new Guild
-// guildID   : The ID of a Guild
-// g 		 : A GuildParams struct with the values Name, Region and VerificationLevel defined.
+// GuildEdit edits a Guild.
 func (s *Session) GuildEdit(guildID string, g *GuildParams, options ...RequestOption) (st *Guild, err error) {
+	if g == nil {
+		return nil, fmt.Errorf("guild edit parameters are nil")
+	}
 
 	// Bounds checking for VerificationLevel, interval: [0, 4]
 	if g.VerificationLevel != nil {
 		val := *g.VerificationLevel
 		if val < 0 || val > 4 {
 			err = ErrVerificationLevelBounds
-			return
-		}
-	}
-
-	// Bounds checking for regions
-	if g.Region != "" {
-		isValid := false
-		regions, _ := s.VoiceRegions(options...)
-		for _, r := range regions {
-			if g.Region == r.ID {
-				isValid = true
-			}
-		}
-		if !isValid {
-			var valid []string
-			for _, r := range regions {
-				valid = append(valid, r.ID)
-			}
-			err = fmt.Errorf("Region not a valid region (%q)", valid)
 			return
 		}
 	}

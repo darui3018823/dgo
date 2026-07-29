@@ -1460,7 +1460,10 @@ const (
 
 // A GuildParams stores all the data needed to update discord guild settings
 type GuildParams struct {
-	Name                        string             `json:"name,omitempty"`
+	Name string `json:"name,omitempty"`
+	// Region is retained for wire compatibility with older Discord API
+	// versions. Current API versions select RTC regions per voice channel.
+	// Deprecated: edit Channel.RTCRegion instead.
 	Region                      string             `json:"region,omitempty"`
 	VerificationLevel           *VerificationLevel `json:"verification_level,omitempty"`
 	DefaultMessageNotifications int                `json:"default_message_notifications,omitempty"` // TODO: Separate type?

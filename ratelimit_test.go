@@ -1,12 +1,76 @@
 package dgo
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestRateLimiterUsesLongestRouteOrGlobalWait(t *testing.T) {
+	rl := NewRatelimiter()
+	bucket := rl.GetBucket("/channels/1/messages")
+	now := time.Now()
+	bucket.Remaining = 0
+	bucket.reset = now.Add(time.Second)
+	atomic.StoreInt64(rl.global, now.Add(5*time.Second).UnixNano())
+
+	wait := rl.GetWaitTime(bucket, 1)
+	if wait < 4*time.Second || wait > 5*time.Second {
+		t.Fatalf("wait = %s, want global wait near 5s", wait)
+	}
+}
+
+func TestRateLimiterReevaluatesWaitAfterWake(t *testing.T) {
+	rl := NewRatelimiter()
+	bucket := rl.GetBucket("/channels/1/messages")
+	bucket.Remaining = 0
+	bucket.reset = time.Now().Add(30 * time.Millisecond)
+
+	started := time.Now()
+	result := make(chan error, 1)
+	go func() {
+		locked, err := rl.LockBucketObjectContext(context.Background(), bucket)
+		if err == nil {
+			err = locked.Release(nil)
+		}
+		result <- err
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	atomic.StoreInt64(rl.global, time.Now().Add(90*time.Millisecond).UnixNano())
+
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed < 80*time.Millisecond {
+		t.Fatalf("bucket lock returned after %s without re-evaluating global wait", elapsed)
+	}
+}
+
+func TestReactionBucketsUseDiscordHeaders(t *testing.T) {
+	rl := NewRatelimiter()
+	bucket := rl.LockBucket("/channels/1/messages/2/reactions/")
+	headers := http.Header{
+		"X-Ratelimit-Remaining":   {"0"},
+		"X-Ratelimit-Reset-After": {"0.1"},
+	}
+	if err := bucket.Release(headers); err != nil {
+		t.Fatal(err)
+	}
+
+	bucket.Lock()
+	defer bucket.Unlock()
+	if bucket.Remaining != 0 {
+		t.Fatalf("reaction bucket remaining = %d, want 0 from Discord header", bucket.Remaining)
+	}
+	if wait := rl.GetWaitTime(bucket, 1); wait <= 0 {
+		t.Fatalf("reaction bucket wait = %s, want positive duration", wait)
+	}
+}
 
 // This test takes ~2 seconds to run
 func TestRatelimitReset(t *testing.T) {

@@ -5,26 +5,17 @@ import (
 	"math"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-// customRateLimit holds information for defining a custom rate limit
-type customRateLimit struct {
-	suffix   string
-	requests int
-	reset    time.Duration
-}
-
 // RateLimiter holds all ratelimit buckets
 type RateLimiter struct {
 	sync.Mutex
-	global           *int64
-	buckets          map[string]*Bucket
-	bucketHashes     map[string]string // maps endpoint key to bucket hash
-	customRateLimits []*customRateLimit
+	global       *int64
+	buckets      map[string]*Bucket
+	bucketHashes map[string]string // maps endpoint key to bucket hash
 }
 
 // NewRatelimiter returns a new RateLimiter
@@ -34,13 +25,6 @@ func NewRatelimiter() *RateLimiter {
 		buckets:      make(map[string]*Bucket),
 		bucketHashes: make(map[string]string),
 		global:       new(int64),
-		customRateLimits: []*customRateLimit{
-			{
-				suffix:   "//reactions//",
-				requests: 1,
-				reset:    200 * time.Millisecond,
-			},
-		},
 	}
 }
 
@@ -67,33 +51,28 @@ func (r *RateLimiter) GetBucket(key string) *Bucket {
 		ratelimiter: r,
 	}
 
-	// Check if there is a custom ratelimit set for this bucket ID.
-	for _, rl := range r.customRateLimits {
-		if strings.HasSuffix(b.Key, rl.suffix) {
-			b.customRateLimit = rl
-			break
-		}
-	}
-
 	r.buckets[key] = b
 	return b
 }
 
 // GetWaitTime returns the duration you should wait for a Bucket
 func (r *RateLimiter) GetWaitTime(b *Bucket, minRemaining int) time.Duration {
+	now := time.Now()
+	var wait time.Duration
+
 	// If we ran out of calls and the reset time is still ahead of us
 	// then we need to take it easy and relax a little
-	if b.Remaining < minRemaining && b.reset.After(time.Now()) {
-		return time.Until(b.reset)
+	if b.Remaining < minRemaining && b.reset.After(now) {
+		wait = b.reset.Sub(now)
 	}
 
 	// Check for global ratelimits
 	sleepTo := time.Unix(0, atomic.LoadInt64(r.global))
-	if now := time.Now(); now.Before(sleepTo) {
-		return sleepTo.Sub(now)
+	if globalWait := sleepTo.Sub(now); globalWait > wait {
+		wait = globalWait
 	}
 
-	return 0
+	return wait
 }
 
 // LockBucket Locks until a request can be made
@@ -119,14 +98,26 @@ func (r *RateLimiter) LockBucketObject(b *Bucket) *Bucket {
 func (r *RateLimiter) LockBucketObjectContext(ctx context.Context, b *Bucket) (*Bucket, error) {
 	b.Lock()
 
-	wait := r.GetWaitTime(b, 1)
-	if wait > 0 {
+	for {
+		wait := r.GetWaitTime(b, 1)
+		if wait <= 0 {
+			break
+		}
+
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 			b.Unlock()
 			return nil, ctx.Err()
-		case <-time.After(wait):
-			// Wait completed
+		case <-timer.C:
+			// Re-evaluate route and global limits because another request may
+			// have extended either deadline while this bucket was waiting.
 		}
 	}
 
@@ -143,27 +134,13 @@ type Bucket struct {
 	global      *int64
 	ratelimiter *RateLimiter
 
-	lastReset       time.Time
-	customRateLimit *customRateLimit
-	Userdata        interface{}
+	Userdata interface{}
 }
 
 // Release unlocks the bucket and reads the headers to update the buckets ratelimit info
 // and locks up the whole thing in case if there's a global ratelimit.
 func (b *Bucket) Release(headers http.Header) error {
 	defer b.Unlock()
-
-	// Check if the bucket uses a custom ratelimiter
-	if rl := b.customRateLimit; rl != nil {
-		if time.Since(b.lastReset) >= rl.reset {
-			b.Remaining = rl.requests - 1
-			b.lastReset = time.Now()
-		}
-		if b.Remaining < 1 {
-			b.reset = time.Now().Add(rl.reset)
-		}
-		return nil
-	}
 
 	if headers == nil {
 		return nil

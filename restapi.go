@@ -3114,11 +3114,11 @@ func (s *Session) ThreadsPrivateArchived(channelID string, before *time.Time, li
 // ThreadsPrivateJoinedArchived returns archived joined private threads for specified channel.
 // before : If specified returns only threads before the timestamp
 // limit  : Optional maximum amount of threads to return.
-func (s *Session) ThreadsPrivateJoinedArchived(channelID string, before *time.Time, limit int, options ...RequestOption) (threads *ThreadsList, err error) {
+func (s *Session) ThreadsPrivateJoinedArchived(channelID string, before string, limit int, options ...RequestOption) (threads *ThreadsList, err error) {
 	endpoint := EndpointChannelJoinedPrivateArchivedThreads(channelID)
 	v := url.Values{}
-	if before != nil {
-		v.Set("before", before.Format(time.RFC3339))
+	if before != "" {
+		v.Set("before", before)
 	}
 
 	if limit > 0 {
@@ -3800,11 +3800,11 @@ func (s *Session) Entitlements(appID string, filterOptions *EntitlementFilterOpt
 		if len(filterOptions.SkuIDs) > 0 {
 			queryParams.Set("sku_ids", strings.Join(filterOptions.SkuIDs, ","))
 		}
-		if filterOptions.Before != nil {
-			queryParams.Set("before", filterOptions.Before.Format(time.RFC3339))
+		if filterOptions.Before != "" {
+			queryParams.Set("before", filterOptions.Before)
 		}
-		if filterOptions.After != nil {
-			queryParams.Set("after", filterOptions.After.Format(time.RFC3339))
+		if filterOptions.After != "" {
+			queryParams.Set("after", filterOptions.After)
 		}
 		if filterOptions.Limit > 0 {
 			queryParams.Set("limit", strconv.Itoa(filterOptions.Limit))
@@ -3814,6 +3814,9 @@ func (s *Session) Entitlements(appID string, filterOptions *EntitlementFilterOpt
 		}
 		if filterOptions.ExcludeEnded {
 			queryParams.Set("exclude_ended", "true")
+		}
+		if filterOptions.ExcludeDeleted {
+			queryParams.Set("exclude_deleted", "true")
 		}
 	}
 
@@ -3832,13 +3835,28 @@ func (s *Session) EntitlementConsume(appID, entitlementID string, options ...Req
 	return
 }
 
+// Entitlement returns an entitlement for the given application.
+func (s *Session) Entitlement(appID, entitlementID string, options ...RequestOption) (entitlement *Entitlement, err error) {
+	endpoint := EndpointEntitlement(appID, entitlementID)
+	body, err := s.RequestWithBucketID("GET", endpoint, nil, EndpointEntitlement(appID, ""), options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &entitlement)
+	return entitlement, err
+}
+
 // EntitlementTestCreate creates a test entitlement to a given SKU for a given guild or user.
 // Discord will act as though that user or guild has entitlement to your premium offering.
-func (s *Session) EntitlementTestCreate(appID string, data *EntitlementTest, options ...RequestOption) (err error) {
+func (s *Session) EntitlementTestCreate(appID string, data *EntitlementTest, options ...RequestOption) (entitlement *Entitlement, err error) {
 	endpoint := EndpointEntitlements(appID)
 
-	_, err = s.RequestWithBucketID("POST", endpoint, data, endpoint, options...)
-	return
+	body, err := s.RequestWithBucketID("POST", endpoint, data, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &entitlement)
+	return entitlement, err
 }
 
 // EntitlementTestDelete deletes a currently-active test entitlement. Discord will act as though
@@ -3851,18 +3869,18 @@ func (s *Session) EntitlementTestDelete(appID, entitlementID string, options ...
 // Subscriptions returns all subscriptions containing the SKU.
 // skuID : The ID of the SKU.
 // userID : User ID for which to return subscriptions. Required except for OAuth queries.
-// before : Optional timestamp to retrieve subscriptions before this time.
-// after : Optional timestamp to retrieve subscriptions after this time.
+// before : Optional subscription snowflake ID to retrieve subscriptions before.
+// after : Optional subscription snowflake ID to retrieve subscriptions after.
 // limit : Optional maximum number of subscriptions to return (1-100, default 50).
-func (s *Session) Subscriptions(skuID string, userID string, before, after *time.Time, limit int, options ...RequestOption) (subscriptions []*Subscription, err error) {
+func (s *Session) Subscriptions(skuID string, userID string, before, after string, limit int, options ...RequestOption) (subscriptions []*Subscription, err error) {
 	endpoint := EndpointSubscriptions(skuID)
 
 	queryParams := url.Values{}
-	if before != nil {
-		queryParams.Set("before", before.Format(time.RFC3339))
+	if before != "" {
+		queryParams.Set("before", before)
 	}
-	if after != nil {
-		queryParams.Set("after", after.Format(time.RFC3339))
+	if after != "" {
+		queryParams.Set("after", after)
 	}
 	if userID != "" {
 		queryParams.Set("user_id", userID)

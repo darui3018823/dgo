@@ -300,6 +300,110 @@ func TestRESTDebugLogRedactsCredentials(t *testing.T) {
 	}
 }
 
+func TestEntitlementPaginationUsesSnowflakes(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		query := request.URL.Query()
+		if query.Get("before") != "100" || query.Get("after") != "200" {
+			t.Errorf("pagination query = %q", request.URL.RawQuery)
+		}
+		if query.Get("exclude_deleted") != "true" {
+			t.Errorf("exclude_deleted = %q, want true", query.Get("exclude_deleted"))
+		}
+		return jsonResponse(http.StatusOK, `[]`), nil
+	})
+
+	_, err = session.Entitlements("app", &EntitlementFilterOptions{
+		Before:         "100",
+		After:          "200",
+		ExcludeDeleted: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSubscriptionPaginationUsesSnowflakes(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		query := request.URL.Query()
+		if query.Get("before") != "300" || query.Get("after") != "400" {
+			t.Errorf("pagination query = %q", request.URL.RawQuery)
+		}
+		return jsonResponse(http.StatusOK, `[]`), nil
+	})
+
+	if _, err = session.Subscriptions("sku", "user", "300", "400", 50); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestJoinedPrivateArchivedThreadsUseSnowflakeBefore(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		if got := request.URL.Query().Get("before"); got != "500" {
+			t.Errorf("before = %q, want 500", got)
+		}
+		return jsonResponse(http.StatusOK, `{"threads":[],"members":[],"has_more":false}`), nil
+	})
+
+	if _, err = session.ThreadsPrivateJoinedArchived("channel", "500", 25); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEntitlementHelpersReturnResponses(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		switch request.Method {
+		case http.MethodGet:
+			return jsonResponse(http.StatusOK, `{"id":"existing"}`), nil
+		case http.MethodPost:
+			return jsonResponse(http.StatusOK, `{"id":"created"}`), nil
+		default:
+			t.Fatalf("unexpected method %s", request.Method)
+			return nil, nil
+		}
+	})
+
+	entitlement, err := session.Entitlement("app", "existing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entitlement.ID != "existing" {
+		t.Fatalf("Entitlement ID = %q", entitlement.ID)
+	}
+
+	entitlement, err = session.EntitlementTestCreate("app", &EntitlementTest{SKUID: "sku"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entitlement.ID != "created" {
+		t.Fatalf("created entitlement ID = %q", entitlement.ID)
+	}
+}
+
+func jsonResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Status:     http.StatusText(status),
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
 func TestWithContext(t *testing.T) {
 	// Set up a test context.
 	type key struct{}

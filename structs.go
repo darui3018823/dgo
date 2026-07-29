@@ -2642,11 +2642,11 @@ type EntitlementFilterOptions struct {
 	// Optional array of SKU IDs to check for.
 	SkuIDs []string
 
-	// Optional timestamp to retrieve Entitlements before this time.
-	Before *time.Time
+	// Optional entitlement snowflake ID to retrieve Entitlements before.
+	Before string
 
-	// Optional timestamp to retrieve Entitlements after this time.
-	After *time.Time
+	// Optional entitlement snowflake ID to retrieve Entitlements after.
+	After string
 
 	// Optional maximum number of entitlements to return (1-100, default 100).
 	Limit int
@@ -2656,6 +2656,9 @@ type EntitlementFilterOptions struct {
 
 	// Optional whether or not ended entitlements should be omitted.
 	ExcludeEnded bool
+
+	// Optional whether or not deleted entitlements should be omitted.
+	ExcludeDeleted bool
 }
 
 // Constants for the different bit offsets of text channel permissions

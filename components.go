@@ -2,7 +2,10 @@ package dgo
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"reflect"
+	"unicode/utf8"
 )
 
 // ComponentType is type of component.
@@ -836,4 +839,332 @@ type ResolvedUnfurledMediaItem struct {
 	Width       int    `json:"width"`
 	Height      int    `json:"height"`
 	ContentType string `json:"content_type"`
+}
+
+// ErrInvalidModal indicates that a modal or one of its components violates
+// Discord's component constraints.
+var ErrInvalidModal = errors.New("invalid modal")
+
+// ValidateModal validates a modal response before it is sent to Discord.
+func ValidateModal(customID, title string, components []MessageComponent) error {
+	if err := validateComponentString("custom_id", customID, 1, 100); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidModal, err)
+	}
+	if err := validateComponentString("title", title, 1, 45); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidModal, err)
+	}
+	if len(components) < 1 || len(components) > 5 {
+		return fmt.Errorf("%w: components must contain between 1 and 5 items", ErrInvalidModal)
+	}
+
+	customIDs := make(map[string]struct{})
+	for i, component := range components {
+		if isNilMessageComponent(component) {
+			return fmt.Errorf("%w: components[%d] must not be nil", ErrInvalidModal, i)
+		}
+		switch component.Type() {
+		case LabelComponent, ActionsRowComponent, TextDisplayComponent:
+		default:
+			return fmt.Errorf("%w: component type %d cannot be used at the top level", ErrInvalidModal, component.Type())
+		}
+		if err := validateModalComponent(component, customIDs); err != nil {
+			return fmt.Errorf("%w: components[%d]: %v", ErrInvalidModal, i, err)
+		}
+	}
+	return nil
+}
+
+func validateModalComponent(component MessageComponent, customIDs map[string]struct{}) error {
+	switch c := component.(type) {
+	case Label:
+		return validateLabel(c, customIDs)
+	case *Label:
+		if c == nil {
+			return errors.New("label must not be nil")
+		}
+		return validateLabel(*c, customIDs)
+	case ActionsRow:
+		return validateModalActionsRow(c, customIDs)
+	case *ActionsRow:
+		if c == nil {
+			return errors.New("action row must not be nil")
+		}
+		return validateModalActionsRow(*c, customIDs)
+	case TextDisplay:
+		return validateComponentString("content", c.Content, 1, 4000)
+	case *TextDisplay:
+		if c == nil {
+			return errors.New("text display must not be nil")
+		}
+		return validateComponentString("content", c.Content, 1, 4000)
+	case TextInput:
+		return validateTextInput(c, customIDs)
+	case *TextInput:
+		if c == nil {
+			return errors.New("text input must not be nil")
+		}
+		return validateTextInput(*c, customIDs)
+	case SelectMenu:
+		return validateModalSelect(c, customIDs)
+	case *SelectMenu:
+		if c == nil {
+			return errors.New("select menu must not be nil")
+		}
+		return validateModalSelect(*c, customIDs)
+	case FileUpload:
+		return validateFileUpload(c, customIDs)
+	case *FileUpload:
+		if c == nil {
+			return errors.New("file upload must not be nil")
+		}
+		return validateFileUpload(*c, customIDs)
+	case RadioGroup:
+		return validateRadioGroup(c, customIDs)
+	case *RadioGroup:
+		if c == nil {
+			return errors.New("radio group must not be nil")
+		}
+		return validateRadioGroup(*c, customIDs)
+	case CheckboxGroup:
+		return validateCheckboxGroup(c, customIDs)
+	case *CheckboxGroup:
+		if c == nil {
+			return errors.New("checkbox group must not be nil")
+		}
+		return validateCheckboxGroup(*c, customIDs)
+	case Checkbox:
+		return validateCustomID(c.CustomID, customIDs)
+	case *Checkbox:
+		if c == nil {
+			return errors.New("checkbox must not be nil")
+		}
+		return validateCustomID(c.CustomID, customIDs)
+	default:
+		return fmt.Errorf("unsupported component implementation %T", component)
+	}
+}
+
+func validateLabel(label Label, customIDs map[string]struct{}) error {
+	if err := validateComponentString("label", label.Label, 1, 45); err != nil {
+		return err
+	}
+	if err := validateComponentString("description", label.Description, 0, 100); err != nil {
+		return err
+	}
+	if isNilMessageComponent(label.Component) {
+		return errors.New("component must not be nil")
+	}
+	switch label.Component.Type() {
+	case SelectMenuComponent, TextInputComponent, UserSelectMenuComponent,
+		RoleSelectMenuComponent, MentionableSelectMenuComponent, ChannelSelectMenuComponent,
+		FileUploadComponent, RadioGroupComponent, CheckboxGroupComponent, CheckboxComponent:
+	default:
+		return fmt.Errorf("component type %d cannot be used in a label", label.Component.Type())
+	}
+	return validateModalComponent(label.Component, customIDs)
+}
+
+func validateModalActionsRow(row ActionsRow, customIDs map[string]struct{}) error {
+	if len(row.Components) != 1 {
+		return errors.New("a modal action row must contain exactly one component")
+	}
+	component := row.Components[0]
+	if isNilMessageComponent(component) {
+		return errors.New("action row component must not be nil")
+	}
+	switch component.Type() {
+	case TextInputComponent, SelectMenuComponent, UserSelectMenuComponent,
+		RoleSelectMenuComponent, MentionableSelectMenuComponent, ChannelSelectMenuComponent:
+	default:
+		return fmt.Errorf("component type %d cannot be used in a modal action row", component.Type())
+	}
+	return validateModalComponent(component, customIDs)
+}
+
+func validateTextInput(input TextInput, customIDs map[string]struct{}) error {
+	if err := validateCustomID(input.CustomID, customIDs); err != nil {
+		return err
+	}
+	if input.Style != TextInputShort && input.Style != TextInputParagraph {
+		return errors.New("style must be TextInputShort or TextInputParagraph")
+	}
+	if input.MinLength < 0 || input.MinLength > 4000 {
+		return errors.New("min_length must be between 0 and 4000")
+	}
+	if input.MaxLength < 0 || input.MaxLength > 4000 {
+		return errors.New("max_length must be between 1 and 4000 when provided")
+	}
+	if input.MaxLength > 0 && input.MinLength > input.MaxLength {
+		return errors.New("min_length must not exceed max_length")
+	}
+	if err := validateComponentString("placeholder", input.Placeholder, 0, 100); err != nil {
+		return err
+	}
+	if err := validateComponentString("value", input.Value, 0, 4000); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateModalSelect(menu SelectMenu, customIDs map[string]struct{}) error {
+	if err := validateCustomID(menu.CustomID, customIDs); err != nil {
+		return err
+	}
+	maxValues := menu.MaxValues
+	if maxValues == 0 {
+		maxValues = 1
+	}
+	limit := 25
+	if menu.Type() != SelectMenuComponent && len(menu.Options) != 0 {
+		return errors.New("options are only valid for string select menus")
+	}
+	if menu.Type() == SelectMenuComponent {
+		if len(menu.Options) < 1 || len(menu.Options) > limit {
+			return errors.New("options must contain between 1 and 25 items")
+		}
+		for i, option := range menu.Options {
+			if err := validateComponentString("option label", option.Label, 1, 100); err != nil {
+				return fmt.Errorf("options[%d]: %v", i, err)
+			}
+			if err := validateComponentString("option value", option.Value, 1, 100); err != nil {
+				return fmt.Errorf("options[%d]: %v", i, err)
+			}
+			if err := validateComponentString("option description", option.Description, 0, 100); err != nil {
+				return fmt.Errorf("options[%d]: %v", i, err)
+			}
+		}
+	}
+	if err := validateMinMax(menu.MinValues, maxValues, limit, menu.Required); err != nil {
+		return err
+	}
+	if err := validateComponentString("placeholder", menu.Placeholder, 0, 150); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateFileUpload(upload FileUpload, customIDs map[string]struct{}) error {
+	if err := validateCustomID(upload.CustomID, customIDs); err != nil {
+		return err
+	}
+	maxValues := upload.MaxValues
+	if maxValues == 0 {
+		maxValues = 1
+	}
+	return validateMinMax(upload.MinValues, maxValues, 10, upload.Required)
+}
+
+func validateRadioGroup(group RadioGroup, customIDs map[string]struct{}) error {
+	if err := validateCustomID(group.CustomID, customIDs); err != nil {
+		return err
+	}
+	if len(group.Options) < 2 || len(group.Options) > 10 {
+		return errors.New("options must contain between 2 and 10 items")
+	}
+	defaults, err := validateModalChoiceOptions(group.Options)
+	if err != nil {
+		return err
+	}
+	if defaults > 1 {
+		return errors.New("only one radio option may be selected by default")
+	}
+	return nil
+}
+
+func validateCheckboxGroup(group CheckboxGroup, customIDs map[string]struct{}) error {
+	if err := validateCustomID(group.CustomID, customIDs); err != nil {
+		return err
+	}
+	if len(group.Options) < 1 || len(group.Options) > 10 {
+		return errors.New("options must contain between 1 and 10 items")
+	}
+	defaults, err := validateModalChoiceOptions(group.Options)
+	if err != nil {
+		return err
+	}
+	maxValues := group.MaxValues
+	if maxValues == 0 {
+		maxValues = len(group.Options)
+	}
+	if err := validateMinMax(group.MinValues, maxValues, len(group.Options), group.Required); err != nil {
+		return err
+	}
+	if defaults > maxValues {
+		return errors.New("the number of default options must not exceed max_values")
+	}
+	return nil
+}
+
+func validateModalChoiceOptions(options []ModalChoiceOption) (int, error) {
+	values := make(map[string]struct{}, len(options))
+	defaults := 0
+	for i, option := range options {
+		if err := validateComponentString("option label", option.Label, 1, 100); err != nil {
+			return 0, fmt.Errorf("options[%d]: %v", i, err)
+		}
+		if err := validateComponentString("option value", option.Value, 1, 100); err != nil {
+			return 0, fmt.Errorf("options[%d]: %v", i, err)
+		}
+		if err := validateComponentString("option description", option.Description, 0, 100); err != nil {
+			return 0, fmt.Errorf("options[%d]: %v", i, err)
+		}
+		if _, exists := values[option.Value]; exists {
+			return 0, fmt.Errorf("options[%d]: value %q is duplicated", i, option.Value)
+		}
+		values[option.Value] = struct{}{}
+		if option.Default {
+			defaults++
+		}
+	}
+	return defaults, nil
+}
+
+func validateMinMax(minValues *int, maxValues, limit int, required *bool) error {
+	minimum := 1
+	if minValues != nil {
+		minimum = *minValues
+	}
+	if minimum < 0 || minimum > limit {
+		return fmt.Errorf("min_values must be between 0 and %d", limit)
+	}
+	if maxValues < 1 || maxValues > limit {
+		return fmt.Errorf("max_values must be between 1 and %d", limit)
+	}
+	if minimum > maxValues {
+		return errors.New("min_values must not exceed max_values")
+	}
+	if minimum == 0 && (required == nil || *required) {
+		return errors.New("min_values may be 0 only when required is false")
+	}
+	return nil
+}
+
+func validateCustomID(customID string, customIDs map[string]struct{}) error {
+	if err := validateComponentString("custom_id", customID, 1, 100); err != nil {
+		return err
+	}
+	if _, exists := customIDs[customID]; exists {
+		return fmt.Errorf("custom_id %q is duplicated", customID)
+	}
+	customIDs[customID] = struct{}{}
+	return nil
+}
+
+func validateComponentString(field, value string, minLength, maxLength int) error {
+	length := utf8.RuneCountInString(value)
+	if length < minLength || length > maxLength {
+		if minLength == 0 {
+			return fmt.Errorf("%s must be at most %d characters", field, maxLength)
+		}
+		return fmt.Errorf("%s must be between %d and %d characters", field, minLength, maxLength)
+	}
+	return nil
+}
+
+func isNilMessageComponent(component MessageComponent) bool {
+	if component == nil {
+		return true
+	}
+	value := reflect.ValueOf(component)
+	return value.Kind() == reflect.Ptr && value.IsNil()
 }

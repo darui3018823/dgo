@@ -3324,6 +3324,11 @@ func (s *Session) InteractionRespond(interaction *Interaction, resp *Interaction
 		return fmt.Errorf("interaction and response must not be nil")
 	}
 	if resp.Data != nil {
+		if resp.Type == InteractionResponseModal {
+			if err := ValidateModal(resp.Data.CustomID, resp.Data.Title, resp.Data.Components); err != nil {
+				return err
+			}
+		}
 		allowedMentions, err := s.resolveAllowedMentions(resp.Data.AllowedMentions)
 		if err != nil {
 			return err

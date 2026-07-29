@@ -2,6 +2,7 @@ package dgo
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"testing"
 )
@@ -122,5 +123,107 @@ func TestUnknownComponentPreservesPayload(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotObject, wantObject) {
 		t.Fatalf("unknown component changed:\n got: %s\nwant: %s", got, payload)
+	}
+}
+
+func TestValidateCurrentModalComponents(t *testing.T) {
+	optional := false
+	minimum := 0
+	components := []MessageComponent{
+		NewLabel("Upload proof", &FileUpload{
+			CustomID:  "files",
+			MinValues: &minimum,
+			Required:  &optional,
+		}),
+		NewLabel("Choose a class", NewRadioGroup("class",
+			ModalChoiceOption{Label: "Wizard", Value: "wizard"},
+			ModalChoiceOption{Label: "Warrior", Value: "warrior"},
+		)),
+		NewLabel("Choose days", NewCheckboxGroup("days",
+			ModalChoiceOption{Label: "Monday", Value: "monday"},
+		)),
+		NewLabel("Agree?", NewCheckbox("agree")),
+	}
+
+	if err := ValidateModal("survey", "Survey", components); err != nil {
+		t.Fatalf("valid modal was rejected: %v", err)
+	}
+}
+
+func TestValidateModalRejectsInvalidComponents(t *testing.T) {
+	zero := 0
+	tooManyDefaults := []ModalChoiceOption{
+		{Label: "One", Value: "one", Default: true},
+		{Label: "Two", Value: "two", Default: true},
+	}
+	tests := []struct {
+		name       string
+		components []MessageComponent
+	}{
+		{
+			name: "duplicate custom ID",
+			components: []MessageComponent{
+				NewLabel("First", NewCheckbox("duplicate")),
+				NewLabel("Second", NewCheckbox("duplicate")),
+			},
+		},
+		{
+			name: "invalid label child",
+			components: []MessageComponent{
+				NewLabel("Bad", &Button{CustomID: "button"}),
+			},
+		},
+		{
+			name:       "typed nil component",
+			components: []MessageComponent{(*Label)(nil)},
+		},
+		{
+			name: "too few radio options",
+			components: []MessageComponent{
+				NewLabel("Class", NewRadioGroup("class", ModalChoiceOption{Label: "One", Value: "one"})),
+			},
+		},
+		{
+			name: "required file upload with zero minimum",
+			components: []MessageComponent{
+				NewLabel("Files", &FileUpload{CustomID: "files", MinValues: &zero}),
+			},
+		},
+		{
+			name: "too many checkbox defaults",
+			components: []MessageComponent{
+				NewLabel("Choices", &CheckboxGroup{
+					CustomID:  "choices",
+					Options:   tooManyDefaults,
+					MaxValues: 1,
+				}),
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateModal("survey", "Survey", test.components)
+			if !errors.Is(err, ErrInvalidModal) {
+				t.Fatalf("error = %v, want ErrInvalidModal", err)
+			}
+		})
+	}
+}
+
+func TestInteractionRespondValidatesModalBeforeRequest(t *testing.T) {
+	err := (&Session{}).InteractionRespond(
+		&Interaction{ID: "1", Token: "token"},
+		&InteractionResponse{
+			Type: InteractionResponseModal,
+			Data: &InteractionResponseData{
+				CustomID:   "survey",
+				Title:      "",
+				Components: []MessageComponent{NewLabel("Agree?", NewCheckbox("agree"))},
+			},
+		},
+	)
+	if !errors.Is(err, ErrInvalidModal) {
+		t.Fatalf("error = %v, want ErrInvalidModal", err)
 	}
 }

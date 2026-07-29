@@ -103,3 +103,35 @@ jobs:
       - name: Run staticcheck
         working-directory: ${{ matrix.module.path }}
         run: staticcheck ./...
+
+  govulncheck:
+    name: Govulncheck ${{ matrix.module.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - name: root
+            path: .
+            mod: go.mod
+            sum: go.sum
+          - name: linked_roles
+            path: examples/linked_roles
+            mod: examples/linked_roles/go.mod
+            sum: examples/linked_roles/go.sum
+          - name: voice_receive
+            path: examples/voice_receive
+            mod: examples/voice_receive/go.mod
+            sum: examples/voice_receive/go.sum
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ matrix.module.mod }}
+          cache-dependency-path: ${{ matrix.module.sum }}
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+      - name: Run govulncheck
+        working-directory: ${{ matrix.module.path }}
+        run: govulncheck ./...

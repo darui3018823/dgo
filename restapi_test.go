@@ -238,6 +238,25 @@ func Test_unmarshal(t *testing.T) {
 	}
 }
 
+func TestInviteAcceptIsUnsupported(t *testing.T) {
+	session, err := New("Bot test-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client.Transport = roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("InviteAccept must not call Discord's private invite acceptance route")
+		return nil, nil
+	})
+
+	invite, err := session.InviteAccept("invite-code")
+	if invite != nil {
+		t.Fatalf("InviteAccept returned an invite: %#v", invite)
+	}
+	if !errors.Is(err, ErrInviteAcceptUnsupported) {
+		t.Fatalf("InviteAccept error = %v, want %v", err, ErrInviteAcceptUnsupported)
+	}
+}
+
 func TestWithContext(t *testing.T) {
 	// Set up a test context.
 	type key struct{}

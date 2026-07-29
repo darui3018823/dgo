@@ -39,6 +39,7 @@ var (
 	ErrGuildNoIcon             = errors.New("guild does not have an icon set")
 	ErrGuildNoSplash           = errors.New("guild does not have a splash set")
 	ErrUnauthorized            = errors.New("HTTP request was unauthorized. This could be because the provided token was not a bot token. Please add \"Bot \" to the start of your token. https://discord.com/developers/docs/reference#authentication-example-bot-token-authorization-header")
+	ErrInviteAcceptUnsupported = errors.New("accepting invites is not supported by Discord's public bot API; install bots through OAuth2 instead")
 )
 
 var (
@@ -2328,17 +2329,12 @@ func (s *Session) InviteDelete(inviteID string, options ...RequestOption) (st *I
 	return
 }
 
-// InviteAccept accepts an Invite to a Guild or Channel
-// inviteID : The invite code
+// InviteAccept is retained for source compatibility, but Discord does not
+// expose invite acceptance through its public bot API.
+//
+// Deprecated: install bots through Discord's OAuth2 authorization flow.
 func (s *Session) InviteAccept(inviteID string, options ...RequestOption) (st *Invite, err error) {
-
-	body, err := s.RequestWithBucketID("POST", EndpointInvite(inviteID), nil, EndpointInvite(""), options...)
-	if err != nil {
-		return
-	}
-
-	err = unmarshal(body, &st)
-	return
+	return nil, ErrInviteAcceptUnsupported
 }
 
 // ------------------------------------------------------------------------------------------------

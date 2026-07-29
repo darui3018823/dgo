@@ -1,4 +1,4 @@
-// Discordgo - Discord bindings for Go
+// dgo - Discord bindings for Go
 // Available at https://github.com/darui3018823/dgo
 
 // Copyright 2015-2016 Bruce Marriner <bruce@sqls.net>.  All rights reserved.
@@ -6,7 +6,7 @@
 // license that can be found in the LICENSE file.
 
 // This file contains variables for all known Discord end points.  All functions
-// throughout the Discordgo package use these variables for all connections
+// throughout the dgo package use these variables for all connections
 // to Discord.  These are all exported and you may modify them if needed.
 
 package dgo

@@ -283,7 +283,7 @@ var (
 			// When the option exists, ok = true
 			if option, ok := optionMap["string-option"]; ok {
 				// Option values must be type asserted from interface{}.
-				// Discordgo provides utility functions to make this simple.
+				// dgo provides utility functions to make this simple.
 				margs = append(margs, option.StringValue())
 				msgformat += "> string-option: %s\n"
 			}

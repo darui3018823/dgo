@@ -22,7 +22,7 @@ func (r *countingReader) Read(buffer []byte) (int, error) {
 }
 
 func TestSnowflakeTimestamp(t *testing.T) {
-	// #discordgo channel ID :)
+	// Project chat channel ID :)
 	id := "155361364909621248"
 	parsedTimestamp, err := SnowflakeTimestamp(id)
 

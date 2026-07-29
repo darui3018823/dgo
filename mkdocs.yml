@@ -1,7 +1,7 @@
-site_name: DiscordGo
-site_author: Bruce Marriner
-site_url: http://darui3018823.github.io/discordgo/
-repo_url: https://github.com/darui3018823/discordgo
+site_name: dgo
+site_author: dgo contributors
+site_url: https://darui3018823.github.io/dgo/
+repo_url: https://github.com/darui3018823/dgo
 
 dev_addr: 0.0.0.0:8000
 theme: yeti
@@ -12,6 +12,8 @@ markdown_extensions:
         permalink: True
     - sane_lists
 
-pages:
+nav:
     - 'Home': 'index.md'
     - 'Getting Started': 'GettingStarted.md'
+    - 'API Inventory': 'API.md'
+    - 'Migration': 'Migration.md'

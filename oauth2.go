@@ -1,4 +1,4 @@
-// Discordgo - Discord bindings for Go
+// dgo - Discord bindings for Go
 // Available at https://github.com/darui3018823/dgo
 
 // Copyright 2015-2016 Bruce Marriner <bruce@sqls.net>.  All rights reserved.
@@ -61,6 +61,7 @@ func (s *Session) Applications() (st []*Application, err error) {
 // ApplicationCreate formerly created an OAuth2 application.
 //
 // Deprecated: this is not a public bot API operation.
+//
 //	name : Name of Application / Bot
 //	uris : Redirect URIs (Not required)
 func (s *Session) ApplicationCreate(ap *Application) (st *Application, err error) {
@@ -70,6 +71,7 @@ func (s *Session) ApplicationCreate(ap *Application) (st *Application, err error
 // ApplicationUpdate formerly updated an OAuth2 application.
 //
 // Deprecated: use CurrentApplicationEdit.
+//
 //	var : desc
 func (s *Session) ApplicationUpdate(appID string, ap *Application) (st *Application, err error) {
 	return nil, ErrOAuthApplicationCRUDUnsupported
@@ -78,6 +80,7 @@ func (s *Session) ApplicationUpdate(appID string, ap *Application) (st *Applicat
 // ApplicationDelete formerly deleted an OAuth2 application.
 //
 // Deprecated: this is not a public bot API operation.
+//
 //	appID : The ID of an Application
 func (s *Session) ApplicationDelete(appID string) (err error) {
 	return ErrOAuthApplicationCRUDUnsupported

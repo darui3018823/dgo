@@ -15,7 +15,7 @@ func ExampleApplication() {
 		return
 	}
 
-	// Create a new Discordgo session
+	// Create a new dgo session
 	dg, err := dgo.New(Token)
 	if err != nil {
 		log.Println(err)

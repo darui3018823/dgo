@@ -1,4 +1,4 @@
-// Discordgo - Discord bindings for Go
+// dgo - Discord bindings for Go
 // Available at https://github.com/darui3018823/dgo
 
 // Copyright 2015-2016 Bruce Marriner <bruce@sqls.net>.  All rights reserved.
@@ -1597,7 +1597,7 @@ func (s *Session) GuildMemberEditComplex(guildID, userID string, data *GuildMemb
 // channelID : The ID of a channel to move user to or nil to remove from voice channel
 //
 // NOTE : I am not entirely set on the name of this function and it may change
-// prior to the final 1.0.0 release of Discordgo
+// prior to the final 1.0.0 release of dgo
 func (s *Session) GuildMemberMove(guildID string, userID string, channelID *string, options ...RequestOption) (err error) {
 	data := struct {
 		ChannelID *string `json:"channel_id"`

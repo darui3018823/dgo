@@ -78,7 +78,7 @@ func handleVoice(c <-chan *dgo.Packet, record bool, writerFactory voiceWriterFac
 			}
 			files[p.SSRC] = file
 		}
-		// Construct pion RTP packet from DiscordGo's type.
+		// Construct a pion RTP packet from dgo's type.
 		rtp := createPionRTPPacket(p)
 		err := file.WriteRTP(rtp)
 		if err != nil {

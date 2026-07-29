@@ -150,7 +150,7 @@ func TestNewUsesResolvedVersion(t *testing.T) {
 	if want := "DiscordBot (https://github.com/darui3018823/dgo, " + versionLabel + ")"; session.UserAgent != want {
 		t.Errorf("UserAgent = %q, want %q", session.UserAgent, want)
 	}
-	if want := "DiscordGo " + versionLabel; session.Identify.Properties.Browser != want {
+	if want := "dgo " + versionLabel; session.Identify.Properties.Browser != want {
 		t.Errorf("Identify browser = %q, want %q", session.Identify.Properties.Browser, want)
 	}
 }

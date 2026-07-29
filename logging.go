@@ -1,11 +1,11 @@
-// Discordgo - Discord bindings for Go
+// dgo - Discord bindings for Go
 // Available at https://github.com/darui3018823/dgo
 
 // Copyright 2015-2016 Bruce Marriner <bruce@sqls.net>.  All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// This file contains code related to discordgo package logging
+// This file contains code related to dgo package logging.
 
 package dgo
 
@@ -37,7 +37,7 @@ const (
 	LogDebug
 )
 
-// Logger can be used to replace the standard logging for discordgo
+// Logger can be used to replace the standard logging for dgo.
 var Logger func(msgL, caller int, format string, a ...interface{})
 
 const redactedValue = "[REDACTED]"
@@ -130,7 +130,7 @@ func sanitizeURL(rawURL string) string {
 	return parsed.String()
 }
 
-// msglog provides package wide logging consistency for discordgo
+// msglog provides package-wide logging consistency for dgo.
 // the format, a...  portion this command follows that of fmt.Printf
 //
 //	msgL   : LogLevel of the message

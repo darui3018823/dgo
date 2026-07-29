@@ -1,4 +1,4 @@
-// Discordgo - Discord bindings for Go
+// dgo - Discord bindings for Go
 // Available at https://github.com/darui3018823/dgo
 
 // Copyright 2015-2016 Bruce Marriner <bruce@sqls.net>.  All rights reserved.
@@ -560,7 +560,7 @@ func (s *Session) UpdateCustomStatus(state string) (err error) {
 
 // UpdateStatusComplex allows for sending the raw status update data untouched by dgo.
 func (s *Session) UpdateStatusComplex(usd UpdateStatusData) (err error) {
-	// The comment does say "untouched by discordgo", but we might need to lie a bit here.
+	// The protocol comment says "untouched by the client", but we need to normalize it here.
 	// The Discord documentation lists `activities` as being nullable, but in practice this
 	// doesn't seem to be the case. I had filed an issue about this at
 	// https://github.com/discord/discord-api-docs/issues/2559, but as of writing this

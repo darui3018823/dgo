@@ -13,8 +13,8 @@ import (
 // ////////////////////////////////////////////////////////////////////////////
 // //////////////////////////////////////////////////// VARS NEEDED FOR TESTING
 var (
-	dg    *Session // Stores a global discordgo user session
-	dgBot *Session // Stores a global discordgo bot session
+	dg    *Session // Stores a global dgo user session
+	dgBot *Session // Stores a global dgo bot session
 
 	envOAuth2Token  = os.Getenv("DG_OAUTH2_TOKEN")  // Token to use when authenticating using OAuth2 token
 	envBotToken     = os.Getenv("DGB_TOKEN")        // Token to use when authenticating the bot account

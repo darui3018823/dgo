@@ -43,7 +43,7 @@ func (eh interfaceEventHandler) Handle(s *Session, i interface{}) {
 
 var registeredInterfaceProviders = map[string]EventInterfaceProvider{}
 
-// registerInterfaceProvider registers a provider so that DiscordGo can
+// registerInterfaceProvider registers a provider so that dgo can
 // access it's New() method.
 func registerInterfaceProvider(eh EventInterfaceProvider) {
 	if _, exists := registeredInterfaceProviders[eh.Type()]; exists {

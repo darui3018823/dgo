@@ -1876,14 +1876,16 @@ func (s *Session) GuildTemplates(guildID string, options ...RequestOption) (st [
 // GuildTemplateCreate creates a template for the guild
 // guildID : The ID of the guild
 // data    : Template metadata
-func (s *Session) GuildTemplateCreate(guildID string, data *GuildTemplateParams, options ...RequestOption) (st *GuildTemplate) {
+func (s *Session) GuildTemplateCreate(guildID string, data *GuildTemplateParams, options ...RequestOption) (st *GuildTemplate, err error) {
 	body, err := s.RequestWithBucketID("POST", EndpointGuildTemplates(guildID), data, EndpointGuildTemplates(guildID), options...)
 	if err != nil {
-		return
+		return nil, err
 	}
 
-	_ = unmarshal(body, &st)
-	return
+	if err = unmarshal(body, &st); err != nil {
+		return nil, err
+	}
+	return st, nil
 }
 
 // GuildTemplateSync syncs the template to the guild's current state

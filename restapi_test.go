@@ -723,6 +723,42 @@ func TestCurrentApplicationHelpers(t *testing.T) {
 	}
 }
 
+func TestGuildTemplateCreateReturnsErrors(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	session.Client.Transport = roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			return jsonResponse(http.StatusOK, `{"code":"template"}`), nil
+		case 2:
+			return jsonResponse(http.StatusBadRequest, `{"message":"invalid","code":50035}`), nil
+		case 3:
+			return jsonResponse(http.StatusOK, `{`), nil
+		default:
+			t.Fatalf("unexpected request %d", requests)
+			return nil, nil
+		}
+	})
+
+	template, err := session.GuildTemplateCreate("guild", &GuildTemplateParams{Name: "Template"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if template.Code != "template" {
+		t.Fatalf("template = %#v", template)
+	}
+	if _, err = session.GuildTemplateCreate("guild", &GuildTemplateParams{Name: ""}); err == nil {
+		t.Fatal("HTTP error was discarded")
+	}
+	if _, err = session.GuildTemplateCreate("guild", &GuildTemplateParams{Name: "Template"}); !errors.Is(err, ErrJSONUnmarshal) {
+		t.Fatalf("unmarshal error = %v, want ErrJSONUnmarshal", err)
+	}
+}
+
 func TestEntitlementHelpersReturnResponses(t *testing.T) {
 	session, err := New("Bot token")
 	if err != nil {

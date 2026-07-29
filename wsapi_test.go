@@ -272,6 +272,59 @@ func TestInvalidSessionBackoffIsWithinDiscordWindow(t *testing.T) {
 	}
 }
 
+func TestGatewayCloseCodeClassification(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want gatewayReconnectAction
+	}{
+		{name: "network error", err: errors.New("network"), want: gatewayReconnectResume},
+		{name: "unknown error", err: &websocket.CloseError{Code: 4000}, want: gatewayReconnectResume},
+		{name: "rate limited", err: &websocket.CloseError{Code: 4008}, want: gatewayReconnectResume},
+		{name: "normal closure", err: &websocket.CloseError{Code: 1000}, want: gatewayReconnectIdentify},
+		{name: "going away", err: &websocket.CloseError{Code: 1001}, want: gatewayReconnectIdentify},
+		{name: "invalid sequence", err: &websocket.CloseError{Code: 4007}, want: gatewayReconnectIdentify},
+		{name: "session timeout", err: &websocket.CloseError{Code: 4009}, want: gatewayReconnectIdentify},
+		{name: "authentication failed", err: &websocket.CloseError{Code: 4004}, want: gatewayReconnectStop},
+		{name: "invalid shard", err: &websocket.CloseError{Code: 4010}, want: gatewayReconnectStop},
+		{name: "sharding required", err: &websocket.CloseError{Code: 4011}, want: gatewayReconnectStop},
+		{name: "invalid API version", err: &websocket.CloseError{Code: 4012}, want: gatewayReconnectStop},
+		{name: "invalid intents", err: &websocket.CloseError{Code: 4013}, want: gatewayReconnectStop},
+		{name: "disallowed intents", err: &websocket.CloseError{Code: 4014}, want: gatewayReconnectStop},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := gatewayReconnectActionForError(test.err); got != test.want {
+				t.Fatalf("action = %d, want %d", got, test.want)
+			}
+		})
+	}
+}
+
+func TestNormalCloseInvalidatesResumeState(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.gatewaySessionMu.Lock()
+	session.sessionID = "session"
+	session.resumeGatewayURL = "wss://resume.discord.gg"
+	session.gatewaySessionMu.Unlock()
+	atomic.StoreInt64(session.sequence, 42)
+
+	if err = session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	session.gatewaySessionMu.RLock()
+	sessionID := session.sessionID
+	resumeGateway := session.resumeGatewayURL
+	session.gatewaySessionMu.RUnlock()
+	if sessionID != "" || resumeGateway != "" || atomic.LoadInt64(session.sequence) != 0 {
+		t.Fatalf("normal close preserved resume state: session=%q gateway=%q sequence=%d",
+			sessionID, resumeGateway, atomic.LoadInt64(session.sequence))
+	}
+}
+
 func TestRequestGuildMembersValidation(t *testing.T) {
 	session, err := New("Bot token")
 	if err != nil {

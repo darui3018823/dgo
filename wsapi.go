@@ -300,15 +300,23 @@ func (s *Session) listen(wsConn *websocket.Conn, listening <-chan interface{}) {
 			if sameConnection {
 
 				s.log(LogWarning, "error reading from gateway %s websocket, %s", s.gateway, err)
+				action := gatewayReconnectActionForError(err)
+				if action != gatewayReconnectResume {
+					s.invalidateGatewaySession()
+				}
 				// There has been an error reading, close the websocket so that
 				// OnDisconnect event is emitted.
-				err := s.Close()
-				if err != nil {
-					s.log(LogWarning, "error closing session connection, %s", err)
+				closeErr := s.closeGateway(websocket.CloseNormalClosure, false)
+				if closeErr != nil {
+					s.log(LogWarning, "error closing session connection, %s", closeErr)
 				}
 
-				s.log(LogInformational, "calling reconnect() now")
-				s.reconnect()
+				if action == gatewayReconnectStop {
+					s.log(LogError, "gateway closed with a terminal error; automatic reconnect stopped")
+				} else {
+					s.log(LogInformational, "calling reconnect() now")
+					s.reconnect()
+				}
 			}
 
 			return
@@ -323,6 +331,29 @@ func (s *Session) listen(wsConn *websocket.Conn, listening <-chan interface{}) {
 			s.onEvent(messageType, message)
 
 		}
+	}
+}
+
+type gatewayReconnectAction uint8
+
+const (
+	gatewayReconnectStop gatewayReconnectAction = iota
+	gatewayReconnectResume
+	gatewayReconnectIdentify
+)
+
+func gatewayReconnectActionForError(err error) gatewayReconnectAction {
+	var closeError *websocket.CloseError
+	if !errors.As(err, &closeError) {
+		return gatewayReconnectResume
+	}
+	switch closeError.Code {
+	case 4004, 4010, 4011, 4012, 4013, 4014:
+		return gatewayReconnectStop
+	case websocket.CloseNormalClosure, websocket.CloseGoingAway, 4007, 4009:
+		return gatewayReconnectIdentify
+	default:
+		return gatewayReconnectResume
 	}
 }
 
@@ -376,7 +407,7 @@ func (s *Session) heartbeat(wsConn *websocket.Conn, listening <-chan interface{}
 			} else {
 				s.log(LogError, "haven't gotten a heartbeat ACK in %v, triggering a reconnection", time.Now().UTC().Sub(last))
 			}
-			s.Close()
+			s.CloseWithCode(4000)
 			s.reconnect()
 			return
 		}
@@ -1196,6 +1227,14 @@ func (s *Session) Close() error {
 // listening/heartbeat goroutines.
 // TODO: Add support for Voice WS/UDP connections
 func (s *Session) CloseWithCode(closeCode int) (err error) {
+	err = s.closeGateway(closeCode, true)
+	if closeCode == websocket.CloseNormalClosure || closeCode == websocket.CloseGoingAway {
+		s.invalidateGatewaySession()
+	}
+	return err
+}
+
+func (s *Session) closeGateway(closeCode int, sendCloseFrame bool) (err error) {
 
 	s.log(LogInformational, "called")
 	s.Lock()
@@ -1213,18 +1252,20 @@ func (s *Session) CloseWithCode(closeCode int) (err error) {
 
 	if s.wsConn != nil {
 
-		s.log(LogInformational, "sending close frame")
-		// To cleanly close a connection, a client should send a close
-		// frame and wait for the server to close the connection.
-		s.wsMutex.Lock()
-		err := s.wsConn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(closeCode, ""))
-		s.wsMutex.Unlock()
-		if err != nil {
-			s.log(LogInformational, "error closing websocket, %s", err)
-		}
+		if sendCloseFrame {
+			s.log(LogInformational, "sending close frame")
+			// To cleanly close a connection, a client should send a close
+			// frame and wait for the server to close the connection.
+			s.wsMutex.Lock()
+			err := s.wsConn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(closeCode, ""))
+			s.wsMutex.Unlock()
+			if err != nil {
+				s.log(LogInformational, "error closing websocket, %s", err)
+			}
 
-		// TODO: Wait for Discord to actually close the connection.
-		time.Sleep(1 * time.Second)
+			// TODO: Wait for Discord to actually close the connection.
+			time.Sleep(1 * time.Second)
+		}
 
 		s.log(LogInformational, "closing gateway websocket")
 		err = s.wsConn.Close()

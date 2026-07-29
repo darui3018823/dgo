@@ -14,10 +14,12 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/url"
 	"strings"
@@ -826,17 +828,18 @@ func (s *Session) onEvent(messageType int, message []byte) (*Event, error) {
 	}
 
 	// Invalid Session
-	// Must respond with a Identify packet.
+	// Discord tells us whether the existing session may be resumed. A new
+	// Identify must never be sent over the already-authenticated connection.
 	if e.Operation == 9 {
-
-		s.log(LogInformational, "sending identify packet to gateway in response to Op9")
-
-		err = s.identify()
-		if err != nil {
-			s.log(LogWarning, "error sending gateway identify packet, %s, %s", s.gateway, err)
-			return e, err
+		var resumable bool
+		if err = json.Unmarshal(e.RawData, &resumable); err != nil {
+			return e, fmt.Errorf("error unmarshalling invalid session payload: %w", err)
 		}
-
+		if !resumable {
+			s.invalidateGatewaySession()
+		}
+		s.log(LogInformational, "gateway session invalidated; resumable=%t", resumable)
+		go s.reconnectInvalidGatewaySession(resumable)
 		return e, nil
 	}
 
@@ -889,6 +892,46 @@ func (s *Session) onEvent(messageType int, message []byte) (*Event, error) {
 	s.handleEvent(eventEventType, e)
 
 	return e, nil
+}
+
+func (s *Session) invalidateGatewaySession() {
+	s.gatewaySessionMu.Lock()
+	s.sessionID = ""
+	s.resumeGatewayURL = ""
+	s.gatewaySessionMu.Unlock()
+	atomic.StoreInt64(s.sequence, 0)
+}
+
+func (s *Session) reconnectInvalidGatewaySession(resumable bool) {
+	if err := s.CloseWithCode(websocket.CloseServiceRestart); err != nil {
+		s.log(LogWarning, "error closing invalid gateway session, %s", err)
+	}
+
+	s.RLock()
+	shouldReconnect := s.ShouldReconnectOnError
+	s.RUnlock()
+	if !shouldReconnect {
+		return
+	}
+	if !resumable {
+		delay := invalidSessionBackoff()
+		s.log(LogInformational, "waiting %s before identifying a new gateway session", delay)
+		timer := time.NewTimer(delay)
+		<-timer.C
+	}
+	s.reconnect()
+}
+
+func invalidSessionBackoff() time.Duration {
+	const (
+		minimum = time.Second
+		spread  = 4 * time.Second
+	)
+	offset, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(spread)))
+	if err != nil {
+		return minimum + spread/2
+	}
+	return minimum + time.Duration(offset.Int64())
 }
 
 // ------------------------------------------------------------------------------------------------

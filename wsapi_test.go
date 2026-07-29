@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -189,6 +190,84 @@ func TestGatewayConnectURLRejectsInvalidURL(t *testing.T) {
 		session.gateway = gateway
 		if _, _, err = session.gatewayConnectURL(); err == nil {
 			t.Fatalf("accepted invalid gateway URL %q", gateway)
+		}
+	}
+}
+
+func TestInvalidSessionPayloadControlsResumeState(t *testing.T) {
+	tests := []struct {
+		name              string
+		payload           string
+		wantSessionID     string
+		wantResumeGateway string
+		wantSequence      int64
+	}{
+		{
+			name:              "resumable",
+			payload:           `{"op":9,"d":true}`,
+			wantSessionID:     "session",
+			wantResumeGateway: "wss://resume.discord.gg",
+			wantSequence:      42,
+		},
+		{
+			name:    "not resumable",
+			payload: `{"op":9,"d":false}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			session, err := New("Bot token")
+			if err != nil {
+				t.Fatal(err)
+			}
+			session.ShouldReconnectOnError = false
+			session.gatewaySessionMu.Lock()
+			session.sessionID = "session"
+			session.resumeGatewayURL = "wss://resume.discord.gg"
+			session.gatewaySessionMu.Unlock()
+			atomic.StoreInt64(session.sequence, 42)
+
+			event, err := session.onEvent(websocket.TextMessage, []byte(test.payload))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if event.Operation != 9 {
+				t.Fatalf("operation = %d, want 9", event.Operation)
+			}
+			session.gatewaySessionMu.RLock()
+			sessionID := session.sessionID
+			resumeGateway := session.resumeGatewayURL
+			session.gatewaySessionMu.RUnlock()
+			if sessionID != test.wantSessionID {
+				t.Fatalf("session ID = %q, want %q", sessionID, test.wantSessionID)
+			}
+			if resumeGateway != test.wantResumeGateway {
+				t.Fatalf("resume gateway = %q, want %q", resumeGateway, test.wantResumeGateway)
+			}
+			if sequence := atomic.LoadInt64(session.sequence); sequence != test.wantSequence {
+				t.Fatalf("sequence = %d, want %d", sequence, test.wantSequence)
+			}
+		})
+	}
+}
+
+func TestInvalidSessionRejectsNonBooleanPayload(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.ShouldReconnectOnError = false
+	if _, err = session.onEvent(websocket.TextMessage, []byte(`{"op":9,"d":"yes"}`)); err == nil {
+		t.Fatal("accepted a non-boolean invalid session payload")
+	}
+}
+
+func TestInvalidSessionBackoffIsWithinDiscordWindow(t *testing.T) {
+	for range 100 {
+		delay := invalidSessionBackoff()
+		if delay < time.Second || delay >= 5*time.Second {
+			t.Fatalf("backoff = %s, want [1s, 5s)", delay)
 		}
 	}
 }

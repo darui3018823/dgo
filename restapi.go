@@ -273,7 +273,8 @@ func (s *Session) RequestRaw(method, urlStr, contentType string, b []byte, bucke
 		return nil, fmt.Errorf("REST rate limiter is nil")
 	}
 
-	bucket, err := s.Ratelimiter.LockBucketContext(cfg.Request.Context(), bucketID)
+	routeKey, majorKey := restRateLimitKeys(method, urlStr, bucketID)
+	bucket, err := s.Ratelimiter.LockBucketRouteContext(cfg.Request.Context(), routeKey, majorKey)
 	if err != nil {
 		return nil, err
 	}
@@ -347,6 +348,19 @@ func (s *Session) prepareRESTRequest(method, urlStr, contentType string, body []
 }
 
 func (s *Session) requestWithLockedBucket(cfg *RequestConfig, contentType string, body []byte, bucket *Bucket, sequence int) ([]byte, error) {
+	limiter := s.Ratelimiter
+	if bucket != nil && bucket.ratelimiter != nil {
+		limiter = bucket.ratelimiter
+	}
+	if limiter == nil {
+		_ = bucket.Release(nil)
+		return nil, fmt.Errorf("REST rate limiter is nil")
+	}
+	if err := limiter.CheckInvalidRequestLimit(); err != nil {
+		_ = bucket.Release(nil)
+		return nil, err
+	}
+
 	retries := sequence
 	var totalWait time.Duration
 
@@ -386,6 +400,7 @@ func (s *Session) requestWithLockedBucket(cfg *RequestConfig, contentType string
 		response, readErr := readRESTResponseBody(resp, cfg.MaxResponseSize)
 		closeErr := resp.Body.Close()
 		releaseErr := bucket.Release(resp.Header)
+		invalidStatus := limiter.RecordResponse(resp.StatusCode)
 		if s.Debug {
 			log.Printf("API RESPONSE STATUS :: %s\n", resp.Status)
 			logHTTPHeaders("API RESPONSE HEADER", resp.Header)
@@ -402,6 +417,16 @@ func (s *Session) requestWithLockedBucket(cfg *RequestConfig, contentType string
 		if releaseErr != nil {
 			return nil, releaseErr
 		}
+		if invalidStatus.WarningTriggered && resp.StatusCode != http.StatusTooManyRequests {
+			s.handleEvent(rateLimitEventType, invalidRequestRateLimitEvent(req, invalidStatus))
+		}
+		if invalidStatus.Blocked && resp.StatusCode != http.StatusTooManyRequests {
+			return nil, InvalidRequestLimitError{
+				Count:      invalidStatus.Count,
+				Limit:      invalidStatus.Limit,
+				ResetAfter: invalidStatus.ResetAfter,
+			}
+		}
 
 		switch {
 		case resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices:
@@ -412,11 +437,28 @@ func (s *Session) requestWithLockedBucket(cfg *RequestConfig, contentType string
 			if err := Unmarshal(response, &rateLimit); err != nil {
 				return nil, fmt.Errorf("rate limit response decode failed: %w", err)
 			}
+			if rateLimit.Global {
+				limiter.ApplyGlobalLimit(rateLimit.RetryAfter)
+			}
 			rateLimitErr := &RateLimitError{&RateLimit{
-				TooManyRequests: &rateLimit,
-				URL:             sanitizeURL(req.URL.String()),
+				TooManyRequests:       &rateLimit,
+				URL:                   sanitizeURL(req.URL.String()),
+				Scope:                 rateLimitScope(resp.Header, rateLimit.Global),
+				Limit:                 rateLimitHeaderInt(resp.Header, "X-RateLimit-Limit"),
+				Remaining:             rateLimitHeaderInt(resp.Header, "X-RateLimit-Remaining"),
+				ResetAfter:            rateLimit.RetryAfter,
+				InvalidRequestCount:   invalidStatus.Count,
+				InvalidRequestLimit:   invalidStatus.Limit,
+				InvalidRequestWarning: invalidStatus.Warning,
 			}}
 			s.handleEvent(rateLimitEventType, rateLimitErr.RateLimit)
+			if invalidStatus.Blocked {
+				return nil, InvalidRequestLimitError{
+					Count:      invalidStatus.Count,
+					Limit:      invalidStatus.Limit,
+					ResetAfter: invalidStatus.ResetAfter,
+				}
+			}
 			if !cfg.ShouldRetryOnRateLimit {
 				return nil, rateLimitErr
 			}
@@ -607,7 +649,51 @@ func relockRESTBucket(ctx context.Context, limiter *RateLimiter, bucket *Bucket)
 	if limiter == nil {
 		return nil, fmt.Errorf("REST rate limiter is nil")
 	}
+	if err := limiter.CheckInvalidRequestLimit(); err != nil {
+		return nil, err
+	}
+	if bucket.RouteKey != "" {
+		return limiter.LockBucketRouteContext(ctx, bucket.RouteKey, bucket.MajorKey)
+	}
 	return limiter.LockBucketObjectContext(ctx, bucket)
+}
+
+func rateLimitScope(headers http.Header, global bool) RateLimitScope {
+	if global {
+		return RateLimitScopeGlobal
+	}
+	scope := RateLimitScope(strings.ToLower(headers.Get("X-RateLimit-Scope")))
+	switch scope {
+	case RateLimitScopeUser, RateLimitScopeGlobal, RateLimitScopeShared:
+		return scope
+	default:
+		return scope
+	}
+}
+
+func rateLimitHeaderInt(headers http.Header, key string) int {
+	value, err := strconv.Atoi(headers.Get(key))
+	if err != nil {
+		return 0
+	}
+	return value
+}
+
+func invalidRequestRateLimitEvent(req *http.Request, status InvalidRequestStatus) *RateLimit {
+	requestURL := ""
+	if req != nil && req.URL != nil {
+		requestURL = sanitizeURL(req.URL.String())
+	}
+	return &RateLimit{
+		TooManyRequests: &TooManyRequests{
+			Message:    "Discord invalid-request warning threshold reached",
+			RetryAfter: status.ResetAfter,
+		},
+		URL:                   requestURL,
+		InvalidRequestCount:   status.Count,
+		InvalidRequestLimit:   status.Limit,
+		InvalidRequestWarning: true,
+	}
 }
 
 func logHTTPHeaders(prefix string, headers http.Header) {

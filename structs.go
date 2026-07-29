@@ -1809,6 +1809,7 @@ type TooManyRequests struct {
 	Bucket     string        `json:"bucket"`
 	Message    string        `json:"message"`
 	RetryAfter time.Duration `json:"retry_after"`
+	Global     bool          `json:"global"`
 }
 
 // UnmarshalJSON helps support translation of a milliseconds-based float
@@ -1818,6 +1819,7 @@ func (t *TooManyRequests) UnmarshalJSON(b []byte) error {
 		Bucket     string  `json:"bucket"`
 		Message    string  `json:"message"`
 		RetryAfter float64 `json:"retry_after"`
+		Global     bool    `json:"global"`
 	}{}
 	err := Unmarshal(b, &u)
 	if err != nil {
@@ -1826,6 +1828,7 @@ func (t *TooManyRequests) UnmarshalJSON(b []byte) error {
 
 	t.Bucket = u.Bucket
 	t.Message = u.Message
+	t.Global = u.Global
 	whole, frac := math.Modf(u.RetryAfter)
 	t.RetryAfter = time.Duration(whole)*time.Second + time.Duration(frac*1000)*time.Millisecond
 	return nil

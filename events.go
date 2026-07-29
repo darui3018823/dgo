@@ -2,6 +2,7 @@ package dgo
 
 import (
 	"encoding/json"
+	"time"
 )
 
 // This file contains all the possible structs that can be
@@ -22,6 +23,15 @@ type Disconnect struct{}
 type RateLimit struct {
 	*TooManyRequests
 	URL string
+
+	Scope      RateLimitScope
+	Limit      int
+	Remaining  int
+	ResetAfter time.Duration
+
+	InvalidRequestCount   int
+	InvalidRequestLimit   int
+	InvalidRequestWarning bool
 }
 
 // Event provides a basic initial struct for all websocket events.

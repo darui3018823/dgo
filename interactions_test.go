@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"net/http/httptest"
 	"strconv"
@@ -11,6 +12,49 @@ import (
 	"testing"
 	"time"
 )
+
+func TestInteractionCurrentContextFields(t *testing.T) {
+	payload := []byte(`{
+		"id":"interaction",
+		"application_id":"app",
+		"type":2,
+		"data":{"id":"command","name":"ping","type":1},
+		"guild":{"id":"guild","name":"support","locale":"ja"},
+		"guild_id":"guild",
+		"channel":{
+			"id":"channel",
+			"guild_id":"guild",
+			"name":"commands",
+			"type":0,
+			"permissions":"3072"
+		},
+		"channel_id":"channel",
+		"token":"secret",
+		"version":1,
+		"attachment_size_limit":26214400,
+		"entitlements":[],
+		"authorizing_integration_owners":{"0":"guild"}
+	}`)
+
+	var interaction Interaction
+	if err := json.Unmarshal(payload, &interaction); err != nil {
+		t.Fatal(err)
+	}
+	if interaction.Guild == nil || interaction.Guild.ID != "guild" {
+		t.Fatalf("unexpected partial guild: %#v", interaction.Guild)
+	}
+	if interaction.Channel == nil ||
+		interaction.Channel.ID != "channel" ||
+		interaction.Channel.Permissions != 3072 {
+		t.Fatalf("unexpected partial channel: %#v", interaction.Channel)
+	}
+	if interaction.AttachmentSizeLimit != 26214400 {
+		t.Fatalf("AttachmentSizeLimit = %d", interaction.AttachmentSizeLimit)
+	}
+	if interaction.AuthorizingIntegrationOwners[ApplicationIntegrationGuildInstall] != "guild" {
+		t.Fatalf("unexpected authorizing owners: %#v", interaction.AuthorizingIntegrationOwners)
+	}
+}
 
 func TestVerifyInteraction(t *testing.T) {
 	pubkey, privkey, err := ed25519.GenerateKey(nil)

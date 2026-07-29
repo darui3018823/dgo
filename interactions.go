@@ -238,7 +238,9 @@ type Interaction struct {
 	AppID     string          `json:"application_id"`
 	Type      InteractionType `json:"type"`
 	Data      InteractionData `json:"data"`
+	Guild     *Guild          `json:"guild"`
 	GuildID   string          `json:"guild_id"`
+	Channel   *Channel        `json:"channel"`
 	ChannelID string          `json:"channel_id"`
 
 	// The message on which interaction was used.
@@ -274,6 +276,9 @@ type Interaction struct {
 	// Any entitlements for the invoking user, representing access to premium SKUs.
 	// NOTE: this field is only filled in monetized apps
 	Entitlements []*Entitlement `json:"entitlements"`
+
+	// Maximum size in bytes for each attachment uploaded in response to this interaction.
+	AttachmentSizeLimit int64 `json:"attachment_size_limit"`
 }
 
 type interaction Interaction

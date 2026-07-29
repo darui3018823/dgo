@@ -23,6 +23,7 @@ const (
 	entitlementDeleteEventType                   = "ENTITLEMENT_DELETE"
 	entitlementUpdateEventType                   = "ENTITLEMENT_UPDATE"
 	eventEventType                               = "__EVENT__"
+	gatewayRateLimitedEventType                  = "RATE_LIMITED"
 	guildAuditLogEntryCreateEventType            = "GUILD_AUDIT_LOG_ENTRY_CREATE"
 	guildBanAddEventType                         = "GUILD_BAN_ADD"
 	guildBanRemoveEventType                      = "GUILD_BAN_REMOVE"
@@ -386,6 +387,26 @@ func (eh eventEventHandler) Type() string {
 // Handle is the handler for Event events.
 func (eh eventEventHandler) Handle(s *Session, i interface{}) {
 	if t, ok := i.(*Event); ok {
+		eh(s, t)
+	}
+}
+
+// gatewayRateLimitedEventHandler is an event handler for GatewayRateLimited events.
+type gatewayRateLimitedEventHandler func(*Session, *GatewayRateLimited)
+
+// Type returns the event type for GatewayRateLimited events.
+func (eh gatewayRateLimitedEventHandler) Type() string {
+	return gatewayRateLimitedEventType
+}
+
+// New returns a new instance of GatewayRateLimited.
+func (eh gatewayRateLimitedEventHandler) New() interface{} {
+	return &GatewayRateLimited{}
+}
+
+// Handle is the handler for GatewayRateLimited events.
+func (eh gatewayRateLimitedEventHandler) Handle(s *Session, i interface{}) {
+	if t, ok := i.(*GatewayRateLimited); ok {
 		eh(s, t)
 	}
 }
@@ -1621,6 +1642,8 @@ func handlerForInterface(handler interface{}) EventHandler {
 		return entitlementUpdateEventHandler(v)
 	case func(*Session, *Event):
 		return eventEventHandler(v)
+	case func(*Session, *GatewayRateLimited):
+		return gatewayRateLimitedEventHandler(v)
 	case func(*Session, *GuildAuditLogEntryCreate):
 		return guildAuditLogEntryCreateEventHandler(v)
 	case func(*Session, *GuildBanAdd):
@@ -1760,6 +1783,7 @@ func init() {
 	registerInterfaceProvider(entitlementCreateEventHandler(nil))
 	registerInterfaceProvider(entitlementDeleteEventHandler(nil))
 	registerInterfaceProvider(entitlementUpdateEventHandler(nil))
+	registerInterfaceProvider(gatewayRateLimitedEventHandler(nil))
 	registerInterfaceProvider(guildAuditLogEntryCreateEventHandler(nil))
 	registerInterfaceProvider(guildBanAddEventHandler(nil))
 	registerInterfaceProvider(guildBanRemoveEventHandler(nil))

@@ -151,6 +151,37 @@ func TestOnEventChannelInfo(t *testing.T) {
 	}
 }
 
+func TestOnEventGatewayRateLimited(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := []byte(`{
+		"op":0,
+		"s":85,
+		"t":"RATE_LIMITED",
+		"d":{
+			"opcode":8,
+			"retry_after":12.5,
+			"meta":{"guild_id":"guild","nonce":"request"}
+		}
+	}`)
+	event, err := session.onEvent(websocket.TextMessage, message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limited, ok := event.Struct.(*GatewayRateLimited)
+	if !ok {
+		t.Fatalf("event.Struct = %T, want *GatewayRateLimited", event.Struct)
+	}
+	if limited.Opcode != 8 || limited.RetryAfter != 12.5 {
+		t.Fatalf("rate limit = %#v", limited)
+	}
+	if limited.Meta.GuildID != "guild" || limited.Meta.Nonce != "request" {
+		t.Fatalf("metadata = %#v", limited.Meta)
+	}
+}
+
 func TestOnEventStageInstanceCreate(t *testing.T) {
 	s, err := New("Bot token")
 	if err != nil {

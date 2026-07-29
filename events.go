@@ -205,6 +205,14 @@ type GuildMembersChunk struct {
 	Nonce      string      `json:"nonce,omitempty"`
 }
 
+// GatewayRateLimited is dispatched when Discord rate limits a Gateway send
+// operation. This is distinct from the synthetic REST RateLimit event.
+type GatewayRateLimited struct {
+	Opcode     int                      `json:"opcode"`
+	RetryAfter float64                  `json:"retry_after"`
+	Meta       GatewayRateLimitMetadata `json:"meta"`
+}
+
 // GuildIntegrationsUpdate is the data for a GuildIntegrationsUpdate event.
 type GuildIntegrationsUpdate struct {
 	GuildID string `json:"guild_id"`

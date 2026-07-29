@@ -371,6 +371,13 @@ type ChannelInfoChannel struct {
 	VoiceStartTime *int64  `json:"voice_start_time,omitempty"`
 }
 
+// GatewayRateLimitMetadata identifies the request affected by a Gateway rate
+// limit. GuildID and Nonce are currently supplied for opcode 8.
+type GatewayRateLimitMetadata struct {
+	GuildID string `json:"guild_id,omitempty"`
+	Nonce   string `json:"nonce,omitempty"`
+}
+
 // A Channel holds all data related to an individual Discord channel.
 type Channel struct {
 	// The ID of the channel.

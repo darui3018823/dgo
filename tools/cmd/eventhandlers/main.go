@@ -99,6 +99,7 @@ func main() {
 var constRegexp = regexp.MustCompile("([a-z])([A-Z])")
 
 var eventNameOverrides = map[string]string{
+	"GatewayRateLimited":       "RATE_LIMITED",
 	"StageInstanceEventCreate": "STAGE_INSTANCE_CREATE",
 	"StageInstanceEventDelete": "STAGE_INSTANCE_DELETE",
 	"StageInstanceEventUpdate": "STAGE_INSTANCE_UPDATE",

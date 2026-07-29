@@ -74,6 +74,7 @@ var (
 	EndpointGuildAutoModerationRule  = func(gID, rID string) string { return EndpointGuildAutoModerationRules(gID) + "/" + rID }
 	EndpointGuildThreads             = func(gID string) string { return EndpointGuild(gID) + "/threads" }
 	EndpointGuildActiveThreads       = func(gID string) string { return EndpointGuildThreads(gID) + "/active" }
+	EndpointGuildMessagesSearch      = func(gID string) string { return EndpointGuild(gID) + "/messages/search" }
 	EndpointGuildPreview             = func(gID string) string { return EndpointGuilds + gID + "/preview" }
 	EndpointGuildChannels            = func(gID string) string { return EndpointGuilds + gID + "/channels" }
 	EndpointGuildMembers             = func(gID string) string { return EndpointGuilds + gID + "/members" }

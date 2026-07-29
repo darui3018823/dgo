@@ -298,11 +298,9 @@ func (s *Session) RequestWithLockedBucket(method, urlStr, contentType string, b 
 		}
 	}
 
-	switch resp.StatusCode {
-	case http.StatusOK:
-	case http.StatusCreated:
-	case http.StatusNoContent:
-	case http.StatusBadGateway:
+	switch {
+	case resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices:
+	case resp.StatusCode == http.StatusBadGateway:
 		// Retry sending request if possible
 		if sequence < cfg.MaxRestRetries {
 
@@ -311,7 +309,7 @@ func (s *Session) RequestWithLockedBucket(method, urlStr, contentType string, b 
 		} else {
 			err = fmt.Errorf("Exceeded Max retries HTTP %s, %s", resp.Status, response)
 		}
-	case 429: // TOO MANY REQUESTS - Rate limiting
+	case resp.StatusCode == http.StatusTooManyRequests:
 		rl := TooManyRequests{}
 		err = Unmarshal(response, &rl)
 		if err != nil {
@@ -340,7 +338,7 @@ func (s *Session) RequestWithLockedBucket(method, urlStr, contentType string, b 
 		} else {
 			err = &RateLimitError{&RateLimit{TooManyRequests: &rl, URL: sanitizeURL(urlStr)}}
 		}
-	case http.StatusUnauthorized:
+	case resp.StatusCode == http.StatusUnauthorized:
 		if strings.Index(s.Token, "Bot ") != 0 {
 			s.log(LogInformational, "%s", ErrUnauthorized.Error())
 			err = ErrUnauthorized
@@ -351,6 +349,170 @@ func (s *Session) RequestWithLockedBucket(method, urlStr, contentType string, b 
 	}
 
 	return
+}
+
+// GuildMessagesSearch searches messages in a guild using the supplied filters.
+func (s *Session) GuildMessagesSearch(guildID string, params *GuildMessageSearchParams, options ...RequestOption) (*GuildMessageSearchResult, error) {
+	endpoint := EndpointGuildMessagesSearch(guildID)
+	query, err := guildMessageSearchQuery(params)
+	if err != nil {
+		return nil, err
+	}
+	requestURL := endpoint
+	if len(query) > 0 {
+		requestURL += "?" + query.Encode()
+	}
+
+	body, err := s.RequestWithBucketID("GET", requestURL, nil, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+	var pending struct {
+		Code             int     `json:"code"`
+		Message          string  `json:"message"`
+		DocumentsIndexed int     `json:"documents_indexed"`
+		RetryAfter       float64 `json:"retry_after"`
+	}
+	if err = unmarshal(body, &pending); err != nil {
+		return nil, err
+	}
+	if pending.Code == 110000 {
+		return nil, &GuildMessageSearchIndexingError{
+			Code:             pending.Code,
+			Message:          pending.Message,
+			DocumentsIndexed: pending.DocumentsIndexed,
+			RetryAfter:       time.Duration(pending.RetryAfter * float64(time.Second)),
+		}
+	}
+	result := &GuildMessageSearchResult{}
+	if err = unmarshal(body, result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func guildMessageSearchQuery(params *GuildMessageSearchParams) (url.Values, error) {
+	query := url.Values{}
+	if params == nil {
+		return query, nil
+	}
+	if params.Limit < 0 || params.Limit > 25 {
+		return nil, errors.New("guild message search limit must be between 1 and 25 when provided")
+	}
+	if params.Offset < 0 || params.Offset > 9975 {
+		return nil, errors.New("guild message search offset must be between 0 and 9975")
+	}
+	if params.Slop != nil && (*params.Slop < 0 || *params.Slop > 100) {
+		return nil, errors.New("guild message search slop must be between 0 and 100")
+	}
+	if utf8.RuneCountInString(params.Content) > 1024 {
+		return nil, errors.New("guild message search content must be at most 1024 characters")
+	}
+	if len(params.ChannelIDs) > 500 {
+		return nil, errors.New("guild message search channel IDs must not exceed 500")
+	}
+	for name, values := range map[string][]string{
+		"author IDs":             params.AuthorIDs,
+		"mentions":               params.Mentions,
+		"mention role IDs":       params.MentionRoleIDs,
+		"replied-to user IDs":    params.RepliedToUserIDs,
+		"replied-to message IDs": params.RepliedToMessageIDs,
+		"embed providers":        params.EmbedProviders,
+		"link hostnames":         params.LinkHostnames,
+		"attachment filenames":   params.AttachmentFilenames,
+		"attachment extensions":  params.AttachmentExtensions,
+	} {
+		if len(values) > 100 {
+			return nil, fmt.Errorf("guild message search %s must not exceed 100", name)
+		}
+	}
+	if err := validateSearchStrings(params.EmbedProviders, 256, "embed provider"); err != nil {
+		return nil, err
+	}
+	if err := validateSearchStrings(params.LinkHostnames, 256, "link hostname"); err != nil {
+		return nil, err
+	}
+	if err := validateSearchStrings(params.AttachmentFilenames, 1024, "attachment filename"); err != nil {
+		return nil, err
+	}
+	if err := validateSearchStrings(params.AttachmentExtensions, 256, "attachment extension"); err != nil {
+		return nil, err
+	}
+	if params.SortBy != "" && params.SortBy != GuildMessageSearchSortTimestamp && params.SortBy != GuildMessageSearchSortRelevance {
+		return nil, fmt.Errorf("unsupported guild message search sort mode %q", params.SortBy)
+	}
+	if params.SortOrder != "" && params.SortOrder != GuildMessageSearchSortAscending && params.SortOrder != GuildMessageSearchSortDescending {
+		return nil, fmt.Errorf("unsupported guild message search sort order %q", params.SortOrder)
+	}
+
+	if params.Limit > 0 {
+		query.Set("limit", strconv.Itoa(params.Limit))
+	}
+	if params.Offset > 0 {
+		query.Set("offset", strconv.Itoa(params.Offset))
+	}
+	if params.MaxID != "" {
+		query.Set("max_id", params.MaxID)
+	}
+	if params.MinID != "" {
+		query.Set("min_id", params.MinID)
+	}
+	if params.Slop != nil {
+		query.Set("slop", strconv.Itoa(*params.Slop))
+	}
+	if params.Content != "" {
+		query.Set("content", params.Content)
+	}
+	addSearchValues(query, "channel_id", params.ChannelIDs)
+	for _, value := range params.AuthorTypes {
+		query.Add("author_type", string(value))
+	}
+	addSearchValues(query, "author_id", params.AuthorIDs)
+	addSearchValues(query, "mentions", params.Mentions)
+	addSearchValues(query, "mentions_role_id", params.MentionRoleIDs)
+	setSearchBool(query, "mention_everyone", params.MentionEveryone)
+	addSearchValues(query, "replied_to_user_id", params.RepliedToUserIDs)
+	addSearchValues(query, "replied_to_message_id", params.RepliedToMessageIDs)
+	setSearchBool(query, "pinned", params.Pinned)
+	for _, value := range params.Has {
+		query.Add("has", string(value))
+	}
+	for _, value := range params.EmbedTypes {
+		query.Add("embed_type", string(value))
+	}
+	addSearchValues(query, "embed_provider", params.EmbedProviders)
+	addSearchValues(query, "link_hostname", params.LinkHostnames)
+	addSearchValues(query, "attachment_filename", params.AttachmentFilenames)
+	addSearchValues(query, "attachment_extension", params.AttachmentExtensions)
+	if params.SortBy != "" {
+		query.Set("sort_by", string(params.SortBy))
+	}
+	if params.SortOrder != "" {
+		query.Set("sort_order", string(params.SortOrder))
+	}
+	setSearchBool(query, "include_nsfw", params.IncludeNSFW)
+	return query, nil
+}
+
+func validateSearchStrings(values []string, maxLength int, name string) error {
+	for i, value := range values {
+		if utf8.RuneCountInString(value) > maxLength {
+			return fmt.Errorf("guild message search %s at index %d must be at most %d characters", name, i, maxLength)
+		}
+	}
+	return nil
+}
+
+func addSearchValues(query url.Values, key string, values []string) {
+	for _, value := range values {
+		query.Add(key, value)
+	}
+}
+
+func setSearchBool(query url.Values, key string, value *bool) {
+	if value != nil {
+		query.Set(key, strconv.FormatBool(*value))
+	}
 }
 
 func unmarshal(data []byte, v interface{}) error {

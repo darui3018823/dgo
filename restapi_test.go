@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -522,6 +523,106 @@ func TestPrimaryEntryPointAndLaunchActivityPayloads(t *testing.T) {
 	}
 	if string(responseJSON) != `{"type":12}` {
 		t.Fatalf("response JSON = %s", responseJSON)
+	}
+}
+
+func TestGuildMessagesSearch(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	slop := 0
+	pinned := false
+	includeNSFW := true
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path != "/api/v10/guilds/guild/messages/search" {
+			t.Errorf("path = %q", request.URL.Path)
+		}
+		query := request.URL.Query()
+		for key, want := range map[string]string{
+			"limit":            "10",
+			"offset":           "20",
+			"max_id":           "900",
+			"min_id":           "100",
+			"slop":             "0",
+			"content":          "release notes",
+			"pinned":           "false",
+			"sort_by":          "relevance",
+			"sort_order":       "asc",
+			"include_nsfw":     "true",
+			"author_type":      "bot",
+			"has":              "file",
+			"embed_type":       "article",
+			"mention_everyone": "",
+		} {
+			if got := query.Get(key); got != want {
+				t.Errorf("%s = %q, want %q", key, got, want)
+			}
+		}
+		if got := query["channel_id"]; !reflect.DeepEqual(got, []string{"channel-1", "channel-2"}) {
+			t.Errorf("channel_id = %#v", got)
+		}
+		return jsonResponse(http.StatusOK, `{
+			"doing_deep_historical_index":true,
+			"documents_indexed":9,
+			"total_results":1,
+			"messages":[[{"id":"message"}]],
+			"threads":[{"id":"thread"}],
+			"members":[{"id":"thread","user_id":"user"}]
+		}`), nil
+	})
+
+	result, err := session.GuildMessagesSearch("guild", &GuildMessageSearchParams{
+		Limit:       10,
+		Offset:      20,
+		MaxID:       "900",
+		MinID:       "100",
+		Slop:        &slop,
+		Content:     "release notes",
+		ChannelIDs:  []string{"channel-1", "channel-2"},
+		AuthorTypes: []GuildMessageSearchAuthorType{GuildMessageSearchAuthorBot},
+		Pinned:      &pinned,
+		Has:         []GuildMessageSearchHasType{GuildMessageSearchHasFile},
+		EmbedTypes:  []GuildMessageSearchEmbedType{GuildMessageSearchEmbedArticle},
+		SortBy:      GuildMessageSearchSortRelevance,
+		SortOrder:   GuildMessageSearchSortAscending,
+		IncludeNSFW: &includeNSFW,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.TotalResults != 1 || len(result.Messages) != 1 || result.Messages[0][0].ID != "message" {
+		t.Fatalf("result = %#v", result)
+	}
+	if result.DocumentsIndexed == nil || *result.DocumentsIndexed != 9 {
+		t.Fatalf("documents indexed = %#v", result.DocumentsIndexed)
+	}
+}
+
+func TestGuildMessagesSearchIndexPending(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client.Transport = roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusAccepted, `{
+			"message":"Index not yet available. Try again later",
+			"code":110000,
+			"documents_indexed":42,
+			"retry_after":1.5
+		}`), nil
+	})
+
+	result, err := session.GuildMessagesSearch("guild", nil)
+	if result != nil {
+		t.Fatalf("result = %#v, want nil", result)
+	}
+	var pending *GuildMessageSearchIndexingError
+	if !errors.As(err, &pending) {
+		t.Fatalf("error = %T %v, want GuildMessageSearchIndexingError", err, err)
+	}
+	if pending.DocumentsIndexed != 42 || pending.RetryAfter != 1500*time.Millisecond {
+		t.Fatalf("pending = %#v", pending)
 	}
 }
 

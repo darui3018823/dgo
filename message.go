@@ -176,6 +176,115 @@ type ChannelPins struct {
 	HasMore bool          `json:"has_more"`
 }
 
+// GuildMessageSearchAuthorType filters search results by message author type.
+type GuildMessageSearchAuthorType string
+
+// Guild message search author types.
+const (
+	GuildMessageSearchAuthorUser    GuildMessageSearchAuthorType = "user"
+	GuildMessageSearchAuthorBot     GuildMessageSearchAuthorType = "bot"
+	GuildMessageSearchAuthorWebhook GuildMessageSearchAuthorType = "webhook"
+)
+
+// GuildMessageSearchHasType filters search results by contained resource.
+type GuildMessageSearchHasType string
+
+// Guild message search resource filters.
+const (
+	GuildMessageSearchHasImage    GuildMessageSearchHasType = "image"
+	GuildMessageSearchHasSound    GuildMessageSearchHasType = "sound"
+	GuildMessageSearchHasVideo    GuildMessageSearchHasType = "video"
+	GuildMessageSearchHasFile     GuildMessageSearchHasType = "file"
+	GuildMessageSearchHasSticker  GuildMessageSearchHasType = "sticker"
+	GuildMessageSearchHasEmbed    GuildMessageSearchHasType = "embed"
+	GuildMessageSearchHasLink     GuildMessageSearchHasType = "link"
+	GuildMessageSearchHasPoll     GuildMessageSearchHasType = "poll"
+	GuildMessageSearchHasSnapshot GuildMessageSearchHasType = "snapshot"
+)
+
+// GuildMessageSearchEmbedType filters search results by embed type.
+type GuildMessageSearchEmbedType string
+
+// Guild message search embed types.
+const (
+	GuildMessageSearchEmbedImage   GuildMessageSearchEmbedType = "image"
+	GuildMessageSearchEmbedVideo   GuildMessageSearchEmbedType = "video"
+	GuildMessageSearchEmbedGIF     GuildMessageSearchEmbedType = "gif"
+	GuildMessageSearchEmbedSound   GuildMessageSearchEmbedType = "sound"
+	GuildMessageSearchEmbedArticle GuildMessageSearchEmbedType = "article"
+)
+
+// GuildMessageSearchSortBy selects the search result sorting algorithm.
+type GuildMessageSearchSortBy string
+
+// Guild message search sort modes.
+const (
+	GuildMessageSearchSortTimestamp GuildMessageSearchSortBy = "timestamp"
+	GuildMessageSearchSortRelevance GuildMessageSearchSortBy = "relevance"
+)
+
+// GuildMessageSearchSortOrder selects ascending or descending results.
+type GuildMessageSearchSortOrder string
+
+// Guild message search sort orders.
+const (
+	GuildMessageSearchSortAscending  GuildMessageSearchSortOrder = "asc"
+	GuildMessageSearchSortDescending GuildMessageSearchSortOrder = "desc"
+)
+
+// GuildMessageSearchParams contains filters for GuildMessagesSearch. Author,
+// resource, and embed filters may be negated by prefixing their value with "-".
+type GuildMessageSearchParams struct {
+	Limit                int
+	Offset               int
+	MaxID                string
+	MinID                string
+	Slop                 *int
+	Content              string
+	ChannelIDs           []string
+	AuthorTypes          []GuildMessageSearchAuthorType
+	AuthorIDs            []string
+	Mentions             []string
+	MentionRoleIDs       []string
+	MentionEveryone      *bool
+	RepliedToUserIDs     []string
+	RepliedToMessageIDs  []string
+	Pinned               *bool
+	Has                  []GuildMessageSearchHasType
+	EmbedTypes           []GuildMessageSearchEmbedType
+	EmbedProviders       []string
+	LinkHostnames        []string
+	AttachmentFilenames  []string
+	AttachmentExtensions []string
+	SortBy               GuildMessageSearchSortBy
+	SortOrder            GuildMessageSearchSortOrder
+	IncludeNSFW          *bool
+}
+
+// GuildMessageSearchResult contains messages matching a guild search query.
+type GuildMessageSearchResult struct {
+	DoingDeepHistoricalIndex bool            `json:"doing_deep_historical_index"`
+	DocumentsIndexed         *int            `json:"documents_indexed,omitempty"`
+	TotalResults             int             `json:"total_results"`
+	Messages                 [][]*Message    `json:"messages"`
+	Threads                  []*Channel      `json:"threads,omitempty"`
+	Members                  []*ThreadMember `json:"members,omitempty"`
+}
+
+// GuildMessageSearchIndexingError indicates that Discord has not finished
+// indexing the guild for search.
+type GuildMessageSearchIndexingError struct {
+	Code             int
+	Message          string
+	DocumentsIndexed int
+	RetryAfter       time.Duration
+}
+
+// Error implements error.
+func (e GuildMessageSearchIndexingError) Error() string {
+	return fmt.Sprintf("guild message search index is not ready (code %d); retry after %s", e.Code, e.RetryAfter)
+}
+
 // UnmarshalJSON is a helper function to unmarshal the Message.
 func (m *Message) UnmarshalJSON(data []byte) error {
 	type message Message

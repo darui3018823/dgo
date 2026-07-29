@@ -1,10 +1,32 @@
 package dgo
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/gorilla/websocket"
 )
+
+func TestOpenRejectsNonBotCredentials(t *testing.T) {
+	tests := []string{
+		"",
+		"raw-user-token",
+		"Bearer oauth-token",
+		"Bot ",
+	}
+
+	for _, token := range tests {
+		t.Run(token, func(t *testing.T) {
+			s, err := New(token)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = s.Open(); !errors.Is(err, ErrWSInvalidToken) {
+				t.Fatalf("Open() error = %v, want %v", err, ErrWSInvalidToken)
+			}
+		})
+	}
+}
 
 func TestOnEventVoiceChannelStatusUpdate(t *testing.T) {
 	s, err := New("Bot token")

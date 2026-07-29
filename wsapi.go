@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -36,6 +37,10 @@ var ErrWSNotFound = errors.New("no websocket connection exists")
 // ErrWSShardBounds is thrown when you try to use a shard ID that is
 // more than the total shard count
 var ErrWSShardBounds = errors.New("ShardID must be less than ShardCount")
+
+// ErrWSInvalidToken is returned when a non-bot credential is used with the
+// Gateway. OAuth2 bearer tokens are supported by REST endpoints only.
+var ErrWSInvalidToken = errors.New("gateway connections require a token prefixed with \"Bot \"")
 
 type resumePacket struct {
 	Op   int `json:"op"`
@@ -57,6 +62,14 @@ func (s *Session) OpenWithContext(ctx context.Context) error {
 	s.log(LogInformational, "called")
 
 	var err error
+
+	token := s.Identify.Token
+	if token == "" {
+		token = s.Token
+	}
+	if !strings.HasPrefix(token, "Bot ") || strings.TrimSpace(strings.TrimPrefix(token, "Bot ")) == "" {
+		return ErrWSInvalidToken
+	}
 
 	// Prevent Open or other major Session functions from
 	// being called while Open is still running.

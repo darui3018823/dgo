@@ -114,3 +114,59 @@ func TestVoiceDebugLogRedactsSecretKey(t *testing.T) {
 		t.Fatalf("voice debug log was not redacted: %s", got)
 	}
 }
+
+func TestDefaultProtocolLogsOmitPrivatePayloads(t *testing.T) {
+	t.Run("handler panic", func(t *testing.T) {
+		session := &Session{SyncEvents: true}
+		var logs bytes.Buffer
+		session.SetLogger(slog.New(slog.NewTextHandler(&logs, nil)))
+		session.AddHandler(func(*Session, *MessageCreate) {
+			panic("https://discord.com/api/v10/webhooks/1/panic-secret")
+		})
+
+		session.handleEvent(messageCreateEventType, &MessageCreate{})
+		if got := logs.String(); strings.Contains(got, "panic-secret") || !strings.Contains(got, "panicked") {
+			t.Fatalf("handler panic log = %q", got)
+		}
+	})
+
+	t.Run("unknown gateway opcode", func(t *testing.T) {
+		session, err := New("Bot token")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var logs bytes.Buffer
+		session.SetLogger(slog.New(slog.NewTextHandler(&logs, nil)))
+		_, err = session.onEvent(
+			websocket.TextMessage,
+			[]byte(`{"op":99,"s":1,"t":"PRIVATE","d":{"content":"private-message-content"}}`),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := logs.String(); strings.Contains(got, "private-message-content") {
+			t.Fatalf("gateway warning log leaked payload: %q", got)
+		}
+	})
+
+	t.Run("malformed voice payload", func(t *testing.T) {
+		previousLogger := Logger
+		defer func() { Logger = previousLogger }()
+
+		var logs bytes.Buffer
+		Logger = func(_ int, _ int, format string, args ...interface{}) {
+			fmt.Fprintf(&logs, format, args...)
+		}
+		voice := &VoiceConnection{LogLevel: LogError}
+		voice.onEvent(
+			false,
+			[]byte(`{"op":4,"d":{"secret_key":"not-base64-private-secret","content":"private-voice-content"}}`),
+		)
+		got := logs.String()
+		for _, secret := range []string{"not-base64-private-secret", "private-voice-content"} {
+			if strings.Contains(got, secret) {
+				t.Fatalf("voice error log leaked %q: %q", secret, got)
+			}
+		}
+	})
+}

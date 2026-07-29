@@ -545,11 +545,7 @@ func classifyVoiceCloseCode(code int) voiceCloseAction {
 func (v *VoiceConnection) onEvent(isBinary bool, message []byte) {
 
 	if isBinary {
-		if len(message) >= 4 {
-			v.log(LogError, "received binary: len=%d first_bytes=[%02x %02x %02x %02x]", len(message), message[0], message[1], message[2], message[3])
-		} else {
-			v.log(LogError, "received binary: len=%d bytes=%x", len(message), message)
-		}
+		v.log(LogDebug, "received voice binary payload: len=%d", len(message))
 		v.handleDAVEBinary(message)
 		return
 	}
@@ -573,7 +569,7 @@ func (v *VoiceConnection) onEvent(isBinary bool, message []byte) {
 	case 2: // READY
 
 		if err := json.Unmarshal(e.RawData, &v.op2); err != nil {
-			v.log(LogError, "OP2 unmarshal error: %s; data=%s", err, redactJSON(e.RawData))
+			v.log(LogError, "OP2 unmarshal error: %s; data_length=%d", err, len(e.RawData))
 			return
 		}
 		if v.op8.HeartbeatInterval <= 0 {
@@ -624,7 +620,7 @@ func (v *VoiceConnection) onEvent(isBinary bool, message []byte) {
 		v.op4 = voiceOP4{}
 		if err := json.Unmarshal(e.RawData, &v.op4); err != nil {
 			v.Unlock()
-			v.log(LogError, "OP4 unmarshal error: %s; data=%s", err, redactJSON(e.RawData))
+			v.log(LogError, "OP4 unmarshal error: %s; data_length=%d", err, len(e.RawData))
 			return
 		}
 
@@ -698,7 +694,7 @@ func (v *VoiceConnection) onEvent(isBinary bool, message []byte) {
 	case 5:
 		voiceSpeakingUpdate := &VoiceSpeakingUpdate{}
 		if err := json.Unmarshal(e.RawData, voiceSpeakingUpdate); err != nil {
-			v.log(LogError, "OP5 unmarshal error: %s; data=%s", err, redactJSON(e.RawData))
+			v.log(LogError, "OP5 unmarshal error: %s; data_length=%d", err, len(e.RawData))
 			return
 		}
 
@@ -721,7 +717,7 @@ func (v *VoiceConnection) onEvent(isBinary bool, message []byte) {
 						if v.session != nil {
 							v.session.reportHandlerPanic(voiceSpeakingUpdate, recovered)
 						} else {
-							v.log(LogError, "voice event handler panicked for %T: %v", voiceSpeakingUpdate, recovered)
+							v.log(LogError, "voice event handler panicked for %T", voiceSpeakingUpdate)
 						}
 					}
 				}()
@@ -746,7 +742,7 @@ func (v *VoiceConnection) onEvent(isBinary bool, message []byte) {
 						if v.session != nil {
 							v.session.reportHandlerPanic(clients, recovered)
 						} else {
-							v.log(LogError, "voice event handler panicked for %T: %v", clients, recovered)
+							v.log(LogError, "voice event handler panicked for %T", clients)
 						}
 					}
 				}()
@@ -773,7 +769,7 @@ func (v *VoiceConnection) onEvent(isBinary bool, message []byte) {
 
 	case 8: // HELLO
 		if err := json.Unmarshal(e.RawData, &v.op8); err != nil {
-			v.log(LogError, "OP8 unmarshal error: %s; data=%s", err, redactJSON(e.RawData))
+			v.log(LogError, "OP8 unmarshal error: %s; data_length=%d", err, len(e.RawData))
 			return
 		}
 		return

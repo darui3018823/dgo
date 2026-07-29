@@ -716,7 +716,7 @@ func (s *Session) onEvent(messageType int, message []byte) (*Event, error) {
 	if e.Operation != 0 {
 		// But we probably should be doing something with them.
 		// TEMP
-		s.log(LogWarning, "unknown Op: %d, Seq: %d, Type: %s, Data: %s", e.Operation, e.Sequence, e.Type, redactJSON(e.RawData))
+		s.log(LogWarning, "unknown Op: %d, Seq: %d, Type: %s, DataLength: %d", e.Operation, e.Sequence, e.Type, len(e.RawData))
 		return e, nil
 	}
 

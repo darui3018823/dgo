@@ -183,14 +183,14 @@ func (s *Session) reportHandlerPanic(event interface{}, recovered interface{}) {
 		func() {
 			defer func() {
 				if hookPanic := recover(); hookPanic != nil {
-					s.log(LogError, "event panic handler panicked for %T: %v", event, hookPanic)
+					s.log(LogError, "event panic handler panicked while handling %T", event)
 				}
 			}()
 			s.PanicHandler(s, event, recovered)
 		}()
 		return
 	}
-	s.log(LogError, "event handler panicked for %T: %v\n%s", event, recovered, debug.Stack())
+	s.log(LogError, "event handler panicked for %T\n%s", event, debug.Stack())
 }
 
 func (s *Session) callEventHandler(eh *eventHandlerInstance, event interface{}) {

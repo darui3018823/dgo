@@ -14,7 +14,8 @@ import (
 
 func TestSessionLog_NoDeadlockUnderWriteLock(t *testing.T) {
 	s := &Session{}
-	s.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	var logs bytes.Buffer
+	s.SetLogger(slog.New(slog.NewTextHandler(&logs, nil)))
 
 	done := make(chan struct{})
 	go func() {
@@ -29,6 +30,26 @@ func TestSessionLog_NoDeadlockUnderWriteLock(t *testing.T) {
 	case <-time.After(1 * time.Second):
 		t.Fatal("Session.log deadlocked while session write lock was held")
 	}
+	if !strings.Contains(logs.String(), "locked log call") {
+		t.Fatalf("log entry was dropped while session lock was held: %q", logs.String())
+	}
+}
+
+func TestSessionLoggerCanBeReplacedConcurrently(t *testing.T) {
+	s := &Session{}
+	s.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 100; i++ {
+			s.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
+		}
+	}()
+	for i := 0; i < 100; i++ {
+		s.log(LogInformational, "message %d", i)
+	}
+	<-done
 }
 
 func TestSanitizeURLRedactsPathAndQueryCredentials(t *testing.T) {

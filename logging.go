@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/url"
 	"runtime"
 	"strings"
@@ -157,23 +158,25 @@ func msglog(msgL, caller int, format string, a ...interface{}) {
 	}
 }
 
-// helper function that wraps msglog for the Session struct
-// This adds a check to insure the message is only logged
-// if the session log level is equal or higher than the
-// message log level
-// helper function that wraps msglog for the Session struct
-// This adds a check to insure the message is only logged
-// if the session log level is equal or higher than the
-// message log level
-func (s *Session) log(msgL int, format string, a ...interface{}) {
-	// Open() and other major methods can call log() while holding Session's write lock.
-	// Using TryRLock avoids a self-deadlock in that case and safely skips the log entry.
-	if !s.TryRLock() {
-		return
-	}
-	logger := s.Logger
-	s.RUnlock()
+// SetLogger safely replaces the structured logger used by the session.
+// A nil logger disables session logging.
+func (s *Session) SetLogger(logger *slog.Logger) {
+	s.loggerMu.Lock()
+	s.Logger = logger
+	s.loggerMu.Unlock()
+}
 
+func (s *Session) logger() *slog.Logger {
+	s.loggerMu.RLock()
+	logger := s.Logger
+	s.loggerMu.RUnlock()
+	return logger
+}
+
+// log writes through the session's slog logger. Filtering is delegated to the
+// configured slog.Handler.
+func (s *Session) log(msgL int, format string, a ...interface{}) {
+	logger := s.logger()
 	if logger == nil {
 		return
 	}

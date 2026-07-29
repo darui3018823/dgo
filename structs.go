@@ -37,11 +37,17 @@ type Session struct {
 	MFA bool
 
 	// Debug for printing JSON request/responses
-	Debug    bool // Deprecated, will be removed.
+	Debug bool // Deprecated, will be removed.
+	// LogLevel is retained for source compatibility. Session logging is filtered
+	// by the configured slog.Handler level.
+	// Deprecated: configure the handler passed to SetLogger instead.
 	LogLevel int
 
-	// Logger for structured logging
-	Logger *slog.Logger
+	// Logger is the structured logger used by the session. Configure it before
+	// starting concurrent session operations, or use SetLogger to replace it
+	// safely while the session is active.
+	Logger   *slog.Logger
+	loggerMu sync.RWMutex
 
 	// Should the session reconnect the websocket on errors.
 	ShouldReconnectOnError bool

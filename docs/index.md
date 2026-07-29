@@ -1,6 +1,6 @@
 # dgo
 
-<img align="right" alt="dgo project mark" src="img/discordgo.svg" width="200">
+<img align="right" alt="dgo project mark" src="img/dgo.svg" width="200">
 
 dgo provides Go bindings for Discord's REST, Gateway, and Voice APIs. It
 supports low-level protocol access together with helpers for bot sessions,

@@ -1,4 +1,4 @@
-<img align="right" alt="dgo project mark" src="../../docs/img/discordgo.svg" width="200">
+<img align="right" alt="dgo project mark" src="../../docs/img/dgo.svg" width="200">
 
 ## dgo avatar example
 
@@ -45,5 +45,5 @@ The below example shows how to set your Avatar from a local file.
 The below example shows how to set your Avatar from a URL.
 
 ```sh
-./avatar -t TOKEN -u https://raw.githubusercontent.com/darui3018823/dgo/master/docs/img/discordgo.svg
+./avatar -t TOKEN -u https://raw.githubusercontent.com/darui3018823/dgo/master/docs/img/dgo.svg
 ```

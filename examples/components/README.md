@@ -1,4 +1,4 @@
-<img align="right" alt="dgo project mark" src="../../docs/img/discordgo.svg" width="200">
+<img align="right" alt="dgo project mark" src="../../docs/img/dgo.svg" width="200">
 
 ## dgo components example
 

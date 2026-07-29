@@ -14,6 +14,7 @@ import (
 	"crypto/cipher"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -95,6 +96,43 @@ type VoiceSpeakingUpdateHandler func(vc *VoiceConnection, vs *VoiceSpeakingUpdat
 // VoiceClientsConnectHandler handles VoiceClientsConnect events.
 type VoiceClientsConnectHandler func(vc *VoiceConnection, event *VoiceClientsConnect)
 
+var (
+	// ErrVoiceConnectionClosed is returned when an operation requires an active
+	// Voice Gateway connection but the connection has already been closed.
+	ErrVoiceConnectionClosed = errors.New("voice connection is closed")
+	// ErrVoiceSessionUnavailable is returned when a VoiceConnection is not
+	// associated with a Discord session.
+	ErrVoiceSessionUnavailable = errors.New("voice connection has no session")
+)
+
+func (v *VoiceConnection) writeVoiceJSON(data interface{}) (*websocket.Conn, error) {
+	v.RLock()
+	wsConn := v.wsConn
+	v.RUnlock()
+	if wsConn == nil {
+		return nil, ErrVoiceConnectionClosed
+	}
+
+	v.wsMutex.Lock()
+	err := wsConn.WriteJSON(data)
+	v.wsMutex.Unlock()
+	return wsConn, err
+}
+
+func (v *VoiceConnection) writeVoiceMessage(messageType int, data []byte) (*websocket.Conn, error) {
+	v.RLock()
+	wsConn := v.wsConn
+	v.RUnlock()
+	if wsConn == nil {
+		return nil, ErrVoiceConnectionClosed
+	}
+
+	v.wsMutex.Lock()
+	err := wsConn.WriteMessage(messageType, data)
+	v.wsMutex.Unlock()
+	return wsConn, err
+}
+
 // Speaking sends a speaking notification to Discord over the voice websocket.
 // This must be sent as true prior to sending audio and should be set to false
 // once finished sending audio.
@@ -113,26 +151,24 @@ func (v *VoiceConnection) Speaking(b bool) (err error) {
 		Data voiceSpeakingData `json:"d"`
 	}
 
-	if v.wsConn == nil {
-		return fmt.Errorf("no VoiceConnection websocket")
-	}
-
 	data := voiceSpeakingOp{5, voiceSpeakingData{b, 0}}
-	v.wsMutex.Lock()
-	err = v.wsConn.WriteJSON(data)
-	v.wsMutex.Unlock()
+	wsConn, err := v.writeVoiceJSON(data)
 
 	v.Lock()
-	defer v.Unlock()
 	if err != nil {
 		v.speaking = false
+		v.Unlock()
 		v.log(LogError, "Speaking() write json error, %s", err)
-		return
+		return err
 	}
-
+	if v.wsConn != wsConn {
+		v.speaking = false
+		v.Unlock()
+		return ErrVoiceConnectionClosed
+	}
 	v.speaking = b
-
-	return
+	v.Unlock()
+	return nil
 }
 
 // ChangeChannel sends Discord a request to change channels within a Guild
@@ -141,44 +177,74 @@ func (v *VoiceConnection) ChangeChannel(channelID string, mute, deaf bool) (err 
 
 	v.log(LogInformational, "called")
 
-	data := voiceChannelJoinOp{4, voiceChannelJoinData{&v.GuildID, &channelID, mute, deaf}}
-	v.session.wsMutex.Lock()
-	err = v.session.wsConn.WriteJSON(data)
-	v.session.wsMutex.Unlock()
-	if err != nil {
-		return
+	v.RLock()
+	session := v.session
+	guildID := v.GuildID
+	sessionID := v.sessionID
+	voiceWS := v.wsConn
+	v.RUnlock()
+	if session == nil {
+		return ErrVoiceSessionUnavailable
+	}
+	if sessionID == "" || voiceWS == nil {
+		return ErrVoiceConnectionClosed
+	}
+
+	data := voiceChannelJoinOp{4, voiceChannelJoinData{&guildID, &channelID, mute, deaf}}
+	if err = session.GatewayWriteStruct(data); err != nil {
+		return err
+	}
+
+	v.Lock()
+	if v.session != session || v.sessionID == "" || v.wsConn != voiceWS {
+		v.Unlock()
+		return ErrVoiceConnectionClosed
 	}
 	v.ChannelID = channelID
 	v.deaf = deaf
 	v.mute = mute
 	v.speaking = false
+	v.Unlock()
 
-	return
+	return nil
 }
 
 // Disconnect disconnects from this voice channel and closes the websocket
 // and udp connections to Discord.
 func (v *VoiceConnection) Disconnect() (err error) {
 
-	// Send a OP4 with a nil channel to disconnect
-	v.Lock()
-	if v.sessionID != "" {
-		data := voiceChannelJoinOp{4, voiceChannelJoinData{&v.GuildID, nil, true, true}}
-		v.session.wsMutex.Lock()
-		err = v.session.wsConn.WriteJSON(data)
-		v.session.wsMutex.Unlock()
-		v.sessionID = ""
-	}
-	v.Unlock()
+	v.RLock()
+	session := v.session
+	sessionID := v.sessionID
+	guildID := v.GuildID
+	v.RUnlock()
 
-	// Close websocket and udp connections
+	if session == nil {
+		v.Close()
+		return ErrVoiceSessionUnavailable
+	}
+
+	// Send an OP4 with a nil channel to disconnect.
+	if sessionID != "" {
+		data := voiceChannelJoinOp{4, voiceChannelJoinData{&guildID, nil, true, true}}
+		err = session.GatewayWriteStruct(data)
+
+		v.Lock()
+		if v.sessionID == sessionID {
+			v.sessionID = ""
+		}
+		v.Unlock()
+	}
+
 	v.Close()
 
-	v.log(LogInformational, "Deleting VoiceConnection %s", v.GuildID)
+	v.log(LogInformational, "Deleting VoiceConnection %s", guildID)
 
-	v.session.Lock()
-	delete(v.session.VoiceConnections, v.GuildID)
-	v.session.Unlock()
+	session.Lock()
+	if session.VoiceConnections[guildID] == v {
+		delete(session.VoiceConnections, guildID)
+	}
+	session.Unlock()
 
 	return
 }
@@ -189,35 +255,37 @@ func (v *VoiceConnection) Close() {
 	v.log(LogInformational, "called")
 
 	v.Lock()
-	defer v.Unlock()
-
 	v.Ready = false
 	v.speaking = false
 	v.dave = nil
+	closeChannel := v.close
+	v.close = nil
+	udpConn := v.udpConn
+	v.udpConn = nil
+	wsConn := v.wsConn
+	v.wsConn = nil
+	v.Unlock()
 
-	if v.close != nil {
-		v.log(LogInformational, "closing v.close")
-		close(v.close)
-		v.close = nil
+	if closeChannel != nil {
+		v.log(LogInformational, "closing voice connection signal")
+		close(closeChannel)
 	}
 
-	if v.udpConn != nil {
+	if udpConn != nil {
 		v.log(LogInformational, "closing udp")
-		err := v.udpConn.Close()
+		err := udpConn.Close()
 		if err != nil {
 			v.log(LogError, "error closing udp connection, %s", err)
 		}
-		v.udpConn = nil
 	}
 
-	if v.wsConn != nil {
+	if wsConn != nil {
 		v.log(LogInformational, "sending close frame")
 
 		// To cleanly close a connection, a client should send a close
 		// frame and wait for the server to close the connection.
 		v.wsMutex.Lock()
-		err := v.wsConn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-		v.wsMutex.Unlock()
+		err := wsConn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 		if err != nil {
 			v.log(LogError, "error closing websocket, %s", err)
 		}
@@ -226,17 +294,19 @@ func (v *VoiceConnection) Close() {
 		time.Sleep(1 * time.Second)
 
 		v.log(LogInformational, "closing websocket")
-		err = v.wsConn.Close()
+		err = wsConn.Close()
+		v.wsMutex.Unlock()
 		if err != nil {
 			v.log(LogError, "error closing websocket, %s", err)
 		}
-
-		v.wsConn = nil
 	}
 }
 
 // AddHandler adds a Handler for VoiceSpeakingUpdate events.
 func (v *VoiceConnection) AddHandler(h VoiceSpeakingUpdateHandler) {
+	if h == nil {
+		return
+	}
 	v.Lock()
 	defer v.Unlock()
 
@@ -245,6 +315,9 @@ func (v *VoiceConnection) AddHandler(h VoiceSpeakingUpdateHandler) {
 
 // AddClientsConnectHandler adds a handler for Voice Clients Connect events.
 func (v *VoiceConnection) AddClientsConnectHandler(h VoiceClientsConnectHandler) {
+	if h == nil {
+		return
+	}
 	v.Lock()
 	defer v.Unlock()
 
@@ -587,7 +660,12 @@ func (v *VoiceConnection) onEvent(isBinary bool, message []byte) {
 		}
 
 		// Start the voice websocket heartbeat to keep the connection alive
-		go v.wsHeartbeat(v.wsConn, v.close, time.Duration(v.op8.HeartbeatInterval))
+		v.RLock()
+		wsConn := v.wsConn
+		closeChannel := v.close
+		heartbeatInterval := v.op8.HeartbeatInterval
+		v.RUnlock()
+		go v.wsHeartbeat(wsConn, closeChannel, time.Duration(heartbeatInterval))
 		// TODO monitor a chan/bool to verify this was successful
 
 		// Start the UDP connection
@@ -1290,28 +1368,41 @@ func (v *VoiceConnection) reconnect() {
 			wait = 600
 		}
 
-		if !v.session.DataReady || v.session.wsConn == nil {
-			v.log(LogInformational, "cannot reconnect to channel %s with unready session", v.ChannelID)
-			continue
-		}
-
-		v.log(LogInformational, "trying to reconnect to channel %s", v.ChannelID)
-
-		_, err := v.session.ChannelVoiceJoin(v.GuildID, v.ChannelID, v.mute, v.deaf)
-		if err == nil {
-			v.log(LogInformational, "successfully reconnected to channel %s", v.ChannelID)
+		v.RLock()
+		session := v.session
+		guildID := v.GuildID
+		channelID := v.ChannelID
+		mute := v.mute
+		deaf := v.deaf
+		v.RUnlock()
+		if session == nil {
+			v.log(LogInformational, "cannot reconnect voice connection without a session")
 			return
 		}
 
-		v.log(LogInformational, "error reconnecting to channel %s, %s", v.ChannelID, err)
+		session.RLock()
+		sessionReady := session.DataReady && session.wsConn != nil
+		session.RUnlock()
+		if !sessionReady {
+			v.log(LogInformational, "cannot reconnect to channel %s with unready session", channelID)
+			continue
+		}
+
+		v.log(LogInformational, "trying to reconnect to channel %s", channelID)
+
+		_, err := session.ChannelVoiceJoin(guildID, channelID, mute, deaf)
+		if err == nil {
+			v.log(LogInformational, "successfully reconnected to channel %s", channelID)
+			return
+		}
+
+		v.log(LogInformational, "error reconnecting to channel %s, %s", channelID, err)
 
 		// if the reconnect above didn't work lets just send a disconnect
 		// packet to reset things.
 		// Send a OP4 with a nil channel to disconnect
-		data := voiceChannelJoinOp{4, voiceChannelJoinData{&v.GuildID, nil, true, true}}
-		v.session.wsMutex.Lock()
-		err = v.session.wsConn.WriteJSON(data)
-		v.session.wsMutex.Unlock()
+		data := voiceChannelJoinOp{4, voiceChannelJoinData{&guildID, nil, true, true}}
+		err = session.GatewayWriteStruct(data)
 		if err != nil {
 			v.log(LogError, "error sending disconnect packet, %s", err)
 		}
@@ -1493,8 +1584,9 @@ func (v *VoiceConnection) handleDAVEPrepareEpoch(data json.RawMessage) {
 func (v *VoiceConnection) RekeyDAVE() {
 	v.RLock()
 	dave := v.dave
+	wsConn := v.wsConn
 	v.RUnlock()
-	if dave == nil {
+	if dave == nil || wsConn == nil {
 		return
 	}
 
@@ -1512,12 +1604,8 @@ func (v *VoiceConnection) sendDAVEKeyPackageBinary(kpData []byte) {
 	binMsg[0] = 26
 	copy(binMsg[1:], kpData)
 
-	v.wsMutex.Lock()
-	defer v.wsMutex.Unlock()
-	if v.wsConn != nil {
-		if err := v.wsConn.WriteMessage(websocket.BinaryMessage, binMsg); err != nil {
-			v.log(LogError, "DAVE key package send failed: %s", err)
-		}
+	if _, err := v.writeVoiceMessage(websocket.BinaryMessage, binMsg); err != nil && !errors.Is(err, ErrVoiceConnectionClosed) {
+		v.log(LogError, "DAVE key package send failed: %s", err)
 	}
 }
 
@@ -1532,12 +1620,8 @@ func (v *VoiceConnection) sendDAVEReadyForTransition(transitionID uint16) {
 		Data readyData `json:"d"`
 	}
 
-	v.wsMutex.Lock()
-	defer v.wsMutex.Unlock()
-	if v.wsConn != nil {
-		if err := v.wsConn.WriteJSON(readyOp{23, readyData{transitionID}}); err != nil {
-			v.log(LogError, "DAVE ready_for_transition send failed: %s", err)
-		}
+	if _, err := v.writeVoiceJSON(readyOp{23, readyData{transitionID}}); err != nil && !errors.Is(err, ErrVoiceConnectionClosed) {
+		v.log(LogError, "DAVE ready_for_transition send failed: %s", err)
 	}
 }
 
@@ -1552,11 +1636,7 @@ func (v *VoiceConnection) sendDAVEInvalidCommitWelcome(transitionID uint16) {
 		Data invalidData `json:"d"`
 	}
 
-	v.wsMutex.Lock()
-	defer v.wsMutex.Unlock()
-	if v.wsConn != nil {
-		if err := v.wsConn.WriteJSON(invalidOp{31, invalidData{transitionID}}); err != nil {
-			v.log(LogError, "DAVE invalid_commit_welcome send failed: %s", err)
-		}
+	if _, err := v.writeVoiceJSON(invalidOp{31, invalidData{transitionID}}); err != nil && !errors.Is(err, ErrVoiceConnectionClosed) {
+		v.log(LogError, "DAVE invalid_commit_welcome send failed: %s", err)
 	}
 }

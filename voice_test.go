@@ -4,9 +4,237 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/binary"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
+
+type testWebsocketUpgradeResult struct {
+	conn *websocket.Conn
+	err  error
+}
+
+func testWebsocketPair(t *testing.T) (*websocket.Conn, *websocket.Conn) {
+	t.Helper()
+
+	upgraded := make(chan testWebsocketUpgradeResult, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{
+			CheckOrigin: func(*http.Request) bool { return true },
+		}).Upgrade(w, r, nil)
+		upgraded <- testWebsocketUpgradeResult{conn: conn, err: err}
+	}))
+
+	client, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		server.Close()
+		t.Fatal(err)
+	}
+
+	result := <-upgraded
+	if result.err != nil {
+		_ = client.Close()
+		server.Close()
+		t.Fatal(result.err)
+	}
+
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = result.conn.Close()
+		server.Close()
+	})
+	return client, result.conn
+}
+
+func readVoiceOperation(t *testing.T, conn *websocket.Conn) voiceChannelJoinOp {
+	t.Helper()
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var operation voiceChannelJoinOp
+	if err := conn.ReadJSON(&operation); err != nil {
+		t.Fatal(err)
+	}
+	return operation
+}
+
+func TestVoicePublicAPIsGuardNilAndClosedState(t *testing.T) {
+	v := &VoiceConnection{LogLevel: -1}
+
+	if err := v.Speaking(true); !errors.Is(err, ErrVoiceConnectionClosed) {
+		t.Fatalf("Speaking error = %v, want ErrVoiceConnectionClosed", err)
+	}
+	if err := v.ChangeChannel("channel", false, false); !errors.Is(err, ErrVoiceSessionUnavailable) {
+		t.Fatalf("ChangeChannel error = %v, want ErrVoiceSessionUnavailable", err)
+	}
+	if err := v.Disconnect(); !errors.Is(err, ErrVoiceSessionUnavailable) {
+		t.Fatalf("Disconnect error = %v, want ErrVoiceSessionUnavailable", err)
+	}
+
+	v.Close()
+	v.Close()
+	v.RekeyDAVE()
+	v.AddHandler(nil)
+	v.AddClientsConnectHandler(nil)
+
+	if len(v.voiceSpeakingUpdateHandlers) != 0 {
+		t.Fatal("AddHandler(nil) registered a handler")
+	}
+	if len(v.voiceClientsConnectHandlers) != 0 {
+		t.Fatal("AddClientsConnectHandler(nil) registered a handler")
+	}
+}
+
+func TestVoicePublicSendAndModeOperations(t *testing.T) {
+	voiceClient, voicePeer := testWebsocketPair(t)
+	gatewayClient, gatewayPeer := testWebsocketPair(t)
+
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.wsConn = gatewayClient
+	session.VoiceConnections = make(map[string]*VoiceConnection)
+
+	v := &VoiceConnection{
+		LogLevel:  -1,
+		GuildID:   "guild",
+		ChannelID: "old-channel",
+		sessionID: "session",
+		session:   session,
+		wsConn:    voiceClient,
+	}
+	session.VoiceConnections[v.GuildID] = v
+
+	if err = v.Speaking(true); err != nil {
+		t.Fatal(err)
+	}
+	if err = voicePeer.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var speaking struct {
+		Op int `json:"op"`
+	}
+	if err = voicePeer.ReadJSON(&speaking); err != nil {
+		t.Fatal(err)
+	}
+	if speaking.Op != 5 {
+		t.Fatalf("Speaking opcode = %d, want 5", speaking.Op)
+	}
+
+	if err = v.ChangeChannel("new-channel", true, false); err != nil {
+		t.Fatal(err)
+	}
+	change := readVoiceOperation(t, gatewayPeer)
+	if change.Op != 4 || change.Data.ChannelID == nil || *change.Data.ChannelID != "new-channel" {
+		t.Fatalf("ChangeChannel operation = %#v", change)
+	}
+	v.RLock()
+	channelID, mute, deaf, speakingState := v.ChannelID, v.mute, v.deaf, v.speaking
+	v.RUnlock()
+	if channelID != "new-channel" || !mute || deaf || speakingState {
+		t.Fatalf("voice mode = channel %q, mute %t, deaf %t, speaking %t", channelID, mute, deaf, speakingState)
+	}
+
+	if err = v.Disconnect(); err != nil {
+		t.Fatal(err)
+	}
+	disconnect := readVoiceOperation(t, gatewayPeer)
+	if disconnect.Op != 4 || disconnect.Data.ChannelID != nil {
+		t.Fatalf("Disconnect operation = %#v", disconnect)
+	}
+	session.RLock()
+	_, exists := session.VoiceConnections[v.GuildID]
+	session.RUnlock()
+	if exists {
+		t.Fatal("Disconnect left the voice connection registered")
+	}
+}
+
+func TestVoicePublicAPIsRaceWithClose(t *testing.T) {
+	voiceClient, voicePeer := testWebsocketPair(t)
+	gatewayClient, gatewayPeer := testWebsocketPair(t)
+
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.wsConn = gatewayClient
+	session.VoiceConnections = make(map[string]*VoiceConnection)
+
+	v := &VoiceConnection{
+		LogLevel:  -1,
+		GuildID:   "guild",
+		ChannelID: "channel",
+		sessionID: "session",
+		session:   session,
+		wsConn:    voiceClient,
+	}
+	session.VoiceConnections[v.GuildID] = v
+
+	drain := func(conn *websocket.Conn) {
+		for {
+			if _, _, readErr := conn.ReadMessage(); readErr != nil {
+				return
+			}
+		}
+	}
+	go drain(voicePeer)
+	go drain(gatewayPeer)
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(3)
+		go func(speaking bool) {
+			defer wg.Done()
+			<-start
+			_ = v.Speaking(speaking)
+		}(i%2 == 0)
+		go func(channel int) {
+			defer wg.Done()
+			<-start
+			_ = v.ChangeChannel("channel-"+string(rune('a'+channel%26)), channel%2 == 0, channel%3 == 0)
+		}(i)
+		go func() {
+			defer wg.Done()
+			<-start
+			v.AddHandler(func(*VoiceConnection, *VoiceSpeakingUpdate) {})
+			v.AddClientsConnectHandler(func(*VoiceConnection, *VoiceClientsConnect) {})
+			v.RekeyDAVE()
+		}()
+	}
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		v.Close()
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		v.Close()
+	}()
+
+	close(start)
+	wg.Wait()
+
+	v.RLock()
+	wsConn := v.wsConn
+	v.RUnlock()
+	if wsConn != nil {
+		t.Fatal("Close left the voice websocket attached")
+	}
+	if err = v.Speaking(true); !errors.Is(err, ErrVoiceConnectionClosed) {
+		t.Fatalf("Speaking after Close error = %v, want ErrVoiceConnectionClosed", err)
+	}
+}
 
 func TestVoiceReadyBeforeHelloDoesNotStartHeartbeat(t *testing.T) {
 	v := &VoiceConnection{LogLevel: -1}

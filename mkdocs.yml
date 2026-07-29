@@ -17,3 +17,4 @@ nav:
     - 'Getting Started': 'GettingStarted.md'
     - 'API Inventory': 'API.md'
     - 'Migration': 'Migration.md'
+    - 'Upstream Sync': 'UpstreamSync.md'

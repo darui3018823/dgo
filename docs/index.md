@@ -15,6 +15,7 @@ path, documentation, and issue tracker when working with this repository.
 - [Getting started](GettingStarted.md)
 - [Migration, compatibility, and deprecation policy](Migration.md)
 - [Public API inventory](API.md)
+- [Upstream synchronization decisions](UpstreamSync.md)
 - [Package reference](https://pkg.go.dev/github.com/darui3018823/dgo)
 - [Examples](../examples)
 

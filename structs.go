@@ -158,10 +158,32 @@ type Session struct {
 	gateway string
 
 	// Stores resumable Gateway session data independently of the connection
-	// lock. READY can be processed while Open holds the Session lock.
+	// lifecycle lock.
 	gatewaySessionMu sync.RWMutex
 	sessionID        string
 	resumeGatewayURL string
+
+	// Gateway lifecycle state. A Session lifetime can own multiple connection
+	// generations while reconnecting; only the current generation may mutate
+	// wsConn, listening, or DataReady.
+	gatewayLifecycleMu       sync.Mutex
+	gatewayLifecycleCounter  uint64
+	gatewayConnectionCounter uint64
+	gatewayLifecycle         *gatewaySessionLifecycle
+	gatewayConnection        *gatewayConnectionLifecycle
+	gatewayState             gatewayConnectionState
+	gatewayReconnectRunning  bool
+	gatewayRoutineCount      int64
+
+	// Connect and Disconnect transitions are queued so synchronous handlers may
+	// call Close without reordering or duplicating lifecycle events.
+	gatewayEventMu          sync.Mutex
+	gatewayEvents           []gatewayQueuedEvent
+	gatewayEventDispatching bool
+
+	// Voice routines launched for the active Gateway lifetime are tracked here.
+	// Voice implementations obtain cancellation from gatewayContext.
+	voiceRoutineWG sync.WaitGroup
 
 	// used to make sure gateway websocket writes do not happen concurrently
 	wsMutex sync.Mutex

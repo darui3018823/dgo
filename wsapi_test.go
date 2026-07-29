@@ -2,16 +2,137 @@ package dgo
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+type gatewayTestServer struct {
+	server      *httptest.Server
+	url         string
+	connections atomic.Int32
+}
+
+func newGatewayTestServer(
+	t *testing.T,
+	handler func(server *gatewayTestServer, connection int, ws *websocket.Conn),
+) *gatewayTestServer {
+	t.Helper()
+	testServer := &gatewayTestServer{}
+	testServer.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := (&websocket.Upgrader{
+			CheckOrigin: func(*http.Request) bool { return true },
+		}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer ws.Close()
+		connection := int(testServer.connections.Add(1))
+		handler(testServer, connection, ws)
+	}))
+	testServer.url = "ws" + strings.TrimPrefix(testServer.server.URL, "http")
+	t.Cleanup(func() {
+		testServer.server.CloseClientConnections()
+		testServer.server.Close()
+	})
+	return testServer
+}
+
+func writeGatewayHello(ws *websocket.Conn, interval time.Duration) error {
+	return ws.WriteJSON(map[string]interface{}{
+		"op": 10,
+		"d": map[string]interface{}{
+			"heartbeat_interval": interval.Milliseconds(),
+		},
+	})
+}
+
+func writeGatewayReady(ws *websocket.Conn, gatewayURL, sessionID string) error {
+	return ws.WriteJSON(map[string]interface{}{
+		"op": 0,
+		"s":  1,
+		"t":  "READY",
+		"d": map[string]interface{}{
+			"v":                  10,
+			"session_id":         sessionID,
+			"resume_gateway_url": gatewayURL,
+			"user": map[string]interface{}{
+				"id":       "1",
+				"username": "gateway-test",
+			},
+			"application": map[string]interface{}{
+				"id": "2",
+			},
+			"guilds": []interface{}{},
+		},
+	})
+}
+
+func readGatewayOperation(ws *websocket.Conn) (int, json.RawMessage, error) {
+	var payload struct {
+		Operation int             `json:"op"`
+		Data      json.RawMessage `json:"d"`
+	}
+	err := ws.ReadJSON(&payload)
+	return payload.Operation, payload.Data, err
+}
+
+func waitForGatewayRoutineCount(t *testing.T, session *Session, want int64) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := atomic.LoadInt64(&session.gatewayRoutineCount); got == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf(
+		"gateway routine count = %d, want %d",
+		atomic.LoadInt64(&session.gatewayRoutineCount),
+		want,
+	)
+}
+
+func assertGatewayClosed(t *testing.T, session *Session) {
+	t.Helper()
+	session.gatewayLifecycleMu.Lock()
+	lifecycle := session.gatewayLifecycle
+	connection := session.gatewayConnection
+	state := session.gatewayState
+	session.gatewayLifecycleMu.Unlock()
+	session.RLock()
+	wsConn := session.wsConn
+	listening := session.listening
+	dataReady := session.DataReady
+	session.RUnlock()
+	if lifecycle != nil || connection != nil || state != gatewayStateClosed {
+		t.Fatalf(
+			"gateway lifecycle not closed: lifecycle=%p connection=%p state=%d",
+			lifecycle,
+			connection,
+			state,
+		)
+	}
+	if wsConn != nil || listening != nil || dataReady {
+		t.Fatalf(
+			"gateway fields not cleared: ws=%p listening=%p ready=%t",
+			wsConn,
+			listening,
+			dataReady,
+		)
+	}
+}
 
 func TestOnEventLogsZlibError(t *testing.T) {
 	s, err := New("Bot token")
@@ -674,4 +795,471 @@ func TestOnEventStageInstanceCreate(t *testing.T) {
 	if stage.ID != "1" || stage.GuildID != "2" || stage.ChannelID != "3" {
 		t.Fatalf("stage instance IDs = %#v", stage.StageInstance)
 	}
+}
+
+func TestOpenStartsHeartbeatBeforeDelayedReady(t *testing.T) {
+	var heartbeats atomic.Int32
+	server := newGatewayTestServer(t, func(server *gatewayTestServer, _ int, ws *websocket.Conn) {
+		if err := writeGatewayHello(ws, 20*time.Millisecond); err != nil {
+			return
+		}
+		readySent := false
+		for {
+			operation, data, err := readGatewayOperation(ws)
+			if err != nil {
+				return
+			}
+			if operation != 1 {
+				continue
+			}
+			count := heartbeats.Add(1)
+			if err = ws.WriteJSON(map[string]interface{}{"op": 11, "d": data}); err != nil {
+				return
+			}
+			if count >= 3 && !readySent {
+				readySent = true
+				if err = writeGatewayReady(ws, server.url, "delayed-ready"); err != nil {
+					return
+				}
+			}
+		}
+	})
+
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.gateway = server.url
+	session.SyncEvents = true
+	var connects atomic.Int32
+	var disconnects atomic.Int32
+	session.AddHandler(func(*Session, *Connect) { connects.Add(1) })
+	session.AddHandler(func(*Session, *Disconnect) { disconnects.Add(1) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err = session.OpenWithContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := heartbeats.Load(); got < 3 {
+		t.Fatalf("heartbeats before READY = %d, want at least 3", got)
+	}
+	if got := connects.Load(); got != 1 {
+		t.Fatalf("Connect events = %d, want 1", got)
+	}
+	session.RLock()
+	dataReady := session.DataReady
+	session.RUnlock()
+	if !dataReady {
+		t.Fatal("Session was not ready after READY")
+	}
+
+	if err = session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := disconnects.Load(); got != 1 {
+		t.Fatalf("Disconnect events = %d, want 1", got)
+	}
+	waitForGatewayRoutineCount(t, session, 0)
+	assertGatewayClosed(t, session)
+}
+
+func TestOpenWithContextCancelsGatewayREST(t *testing.T) {
+	requestStarted := make(chan struct{})
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client = &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		close(requestStarted)
+		<-request.Context().Done()
+		return nil, request.Context().Err()
+	})}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	openDone := make(chan error, 1)
+	go func() { openDone <- session.OpenWithContext(ctx) }()
+	<-requestStarted
+	cancel()
+	if err = <-openDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("OpenWithContext error = %v, want context.Canceled", err)
+	}
+	waitForGatewayRoutineCount(t, session, 0)
+	assertGatewayClosed(t, session)
+}
+
+func TestOpenWithContextCancelsGatewayDial(t *testing.T) {
+	dialStarted := make(chan struct{})
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.gateway = "ws://gateway.invalid"
+	session.Dialer = &websocket.Dialer{
+		NetDialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			close(dialStarted)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	openDone := make(chan error, 1)
+	go func() { openDone <- session.OpenWithContext(ctx) }()
+	<-dialStarted
+	cancel()
+	if err = <-openDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("OpenWithContext error = %v, want context.Canceled", err)
+	}
+	waitForGatewayRoutineCount(t, session, 0)
+	assertGatewayClosed(t, session)
+}
+
+func TestOpenWithContextCancelsHelloRead(t *testing.T) {
+	connected := make(chan struct{})
+	server := newGatewayTestServer(t, func(_ *gatewayTestServer, _ int, ws *websocket.Conn) {
+		close(connected)
+		for {
+			if _, _, err := readGatewayOperation(ws); err != nil {
+				return
+			}
+		}
+	})
+
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.gateway = server.url
+	ctx, cancel := context.WithCancel(context.Background())
+	openDone := make(chan error, 1)
+	go func() { openDone <- session.OpenWithContext(ctx) }()
+	<-connected
+	cancel()
+	if err = <-openDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("OpenWithContext error = %v, want context.Canceled", err)
+	}
+	waitForGatewayRoutineCount(t, session, 0)
+	assertGatewayClosed(t, session)
+}
+
+func TestOpenWithContextCancelsReadyWait(t *testing.T) {
+	identified := make(chan struct{})
+	server := newGatewayTestServer(t, func(_ *gatewayTestServer, _ int, ws *websocket.Conn) {
+		if err := writeGatewayHello(ws, time.Second); err != nil {
+			return
+		}
+		for {
+			operation, _, err := readGatewayOperation(ws)
+			if err != nil {
+				return
+			}
+			if operation == 2 {
+				close(identified)
+				continue
+			}
+			if operation == 1 {
+				if err = ws.WriteJSON(map[string]interface{}{"op": 11}); err != nil {
+					return
+				}
+			}
+		}
+	})
+
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.gateway = server.url
+	ctx, cancel := context.WithCancel(context.Background())
+	openDone := make(chan error, 1)
+	go func() { openDone <- session.OpenWithContext(ctx) }()
+	<-identified
+	cancel()
+	if err = <-openDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("OpenWithContext error = %v, want context.Canceled", err)
+	}
+	waitForGatewayRoutineCount(t, session, 0)
+	assertGatewayClosed(t, session)
+}
+
+func TestOpenReconnectsWhenOpcode7ArrivesBeforeReady(t *testing.T) {
+	server := newGatewayTestServer(t, func(server *gatewayTestServer, connection int, ws *websocket.Conn) {
+		if err := writeGatewayHello(ws, time.Second); err != nil {
+			return
+		}
+		for {
+			operation, _, err := readGatewayOperation(ws)
+			if err != nil {
+				return
+			}
+			if operation != 2 {
+				continue
+			}
+			if connection == 1 {
+				_ = ws.WriteJSON(map[string]interface{}{"op": 7, "d": nil})
+				return
+			}
+			_ = writeGatewayReady(ws, server.url, "after-opcode-7")
+			for {
+				if _, _, err = readGatewayOperation(ws); err != nil {
+					return
+				}
+			}
+		}
+	})
+
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.gateway = server.url
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err = session.OpenWithContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := server.connections.Load(); got != 2 {
+		t.Fatalf("Gateway connections = %d, want 2", got)
+	}
+	if err = session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	waitForGatewayRoutineCount(t, session, 0)
+}
+
+func TestOpenCancelInterruptsInvalidSessionBackoff(t *testing.T) {
+	invalidSessionSent := make(chan struct{})
+	server := newGatewayTestServer(t, func(_ *gatewayTestServer, _ int, ws *websocket.Conn) {
+		if err := writeGatewayHello(ws, time.Second); err != nil {
+			return
+		}
+		for {
+			operation, _, err := readGatewayOperation(ws)
+			if err != nil {
+				return
+			}
+			if operation == 2 {
+				_ = ws.WriteJSON(map[string]interface{}{"op": 9, "d": false})
+				close(invalidSessionSent)
+				return
+			}
+		}
+	})
+
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.gateway = server.url
+	ctx, cancel := context.WithCancel(context.Background())
+	openDone := make(chan error, 1)
+	go func() { openDone <- session.OpenWithContext(ctx) }()
+	<-invalidSessionSent
+	cancelStarted := time.Now()
+	cancel()
+	if err = <-openDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("OpenWithContext error = %v, want context.Canceled", err)
+	}
+	if elapsed := time.Since(cancelStarted); elapsed > 250*time.Millisecond {
+		t.Fatalf("invalid-session backoff cancellation took %s", elapsed)
+	}
+	waitForGatewayRoutineCount(t, session, 0)
+	assertGatewayClosed(t, session)
+}
+
+func TestGatewayReconnectCloseRaceEmitsOneDisconnect(t *testing.T) {
+	secondHello := make(chan struct{})
+	server := newGatewayTestServer(t, func(server *gatewayTestServer, connection int, ws *websocket.Conn) {
+		if err := writeGatewayHello(ws, time.Second); err != nil {
+			return
+		}
+		for {
+			operation, _, err := readGatewayOperation(ws)
+			if err != nil {
+				return
+			}
+			if connection == 1 && operation == 2 {
+				if err = writeGatewayReady(ws, server.url, "reconnect-race"); err != nil {
+					return
+				}
+				time.Sleep(20 * time.Millisecond)
+				return
+			}
+			if connection == 2 && operation == 6 {
+				close(secondHello)
+				for {
+					if _, _, err = readGatewayOperation(ws); err != nil {
+						return
+					}
+				}
+			}
+		}
+	})
+
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.gateway = server.url
+	session.SyncEvents = true
+	var connects atomic.Int32
+	var disconnects atomic.Int32
+	session.AddHandler(func(*Session, *Connect) { connects.Add(1) })
+	session.AddHandler(func(*Session, *Disconnect) { disconnects.Add(1) })
+	if err = session.Open(); err != nil {
+		t.Fatal(err)
+	}
+	<-secondHello
+
+	var closes sync.WaitGroup
+	closes.Add(2)
+	for range 2 {
+		go func() {
+			defer closes.Done()
+			if closeErr := session.Close(); closeErr != nil {
+				t.Errorf("Close returned error: %v", closeErr)
+			}
+		}()
+	}
+	closes.Wait()
+	waitForGatewayRoutineCount(t, session, 0)
+	assertGatewayClosed(t, session)
+	if got := connects.Load(); got != 1 {
+		t.Fatalf("Connect events = %d, want 1", got)
+	}
+	if got := disconnects.Load(); got != 1 {
+		t.Fatalf("Disconnect events = %d, want 1", got)
+	}
+}
+
+func TestGatewayLifetimeContextCancellationClosesReadyConnection(t *testing.T) {
+	server := newGatewayTestServer(t, func(server *gatewayTestServer, _ int, ws *websocket.Conn) {
+		if err := writeGatewayHello(ws, time.Second); err != nil {
+			return
+		}
+		for {
+			operation, _, err := readGatewayOperation(ws)
+			if err != nil {
+				return
+			}
+			switch operation {
+			case 2:
+				if err = writeGatewayReady(ws, server.url, "lifetime-cancel"); err != nil {
+					return
+				}
+			case 1:
+				if err = ws.WriteJSON(map[string]interface{}{"op": 11}); err != nil {
+					return
+				}
+			}
+		}
+	})
+
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.gateway = server.url
+	session.SyncEvents = true
+	var connects atomic.Int32
+	var disconnects atomic.Int32
+	session.AddHandler(func(*Session, *Connect) { connects.Add(1) })
+	session.AddHandler(func(*Session, *Disconnect) { disconnects.Add(1) })
+	ctx, cancel := context.WithCancel(context.Background())
+	if err = session.OpenWithContext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	waitForGatewayRoutineCount(t, session, 0)
+	assertGatewayClosed(t, session)
+	if got := connects.Load(); got != 1 {
+		t.Fatalf("Connect events = %d, want 1", got)
+	}
+	if got := disconnects.Load(); got != 1 {
+		t.Fatalf("Disconnect events = %d, want 1", got)
+	}
+}
+
+func TestConnectHandlerCanCloseWithoutDeadlock(t *testing.T) {
+	server := newGatewayTestServer(t, func(server *gatewayTestServer, _ int, ws *websocket.Conn) {
+		if err := writeGatewayHello(ws, time.Second); err != nil {
+			return
+		}
+		for {
+			operation, _, err := readGatewayOperation(ws)
+			if err != nil {
+				return
+			}
+			if operation == 2 {
+				_ = writeGatewayReady(ws, server.url, "close-in-connect")
+			}
+		}
+	})
+
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.gateway = server.url
+	session.SyncEvents = true
+	var connects atomic.Int32
+	var disconnects atomic.Int32
+	session.AddHandler(func(session *Session, _ *Connect) {
+		connects.Add(1)
+		if closeErr := session.Close(); closeErr != nil {
+			t.Errorf("Close in Connect handler: %v", closeErr)
+		}
+	})
+	session.AddHandler(func(*Session, *Disconnect) { disconnects.Add(1) })
+
+	openDone := make(chan error, 1)
+	go func() { openDone <- session.Open() }()
+	select {
+	case err = <-openDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Open deadlocked when Connect handler called Close")
+	}
+	waitForGatewayRoutineCount(t, session, 0)
+	assertGatewayClosed(t, session)
+	if got := connects.Load(); got != 1 {
+		t.Fatalf("Connect events = %d, want 1", got)
+	}
+	if got := disconnects.Load(); got != 1 {
+		t.Fatalf("Disconnect events = %d, want 1", got)
+	}
+}
+
+func TestSessionCloseWaitsForLifetimeVoiceRoutines(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = session.beginGatewayLifecycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	lifetime := session.gatewayContext()
+	routineDone := make(chan struct{})
+	if started := session.startVoiceRoutine(func() {
+		<-lifetime.Done()
+		close(routineDone)
+	}); !started {
+		t.Fatal("voice routine did not start for active Gateway lifetime")
+	}
+
+	if err = session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-routineDone:
+	default:
+		t.Fatal("Session.Close returned before the lifetime voice routine stopped")
+	}
+	assertGatewayClosed(t, session)
 }

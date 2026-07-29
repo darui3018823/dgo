@@ -2714,11 +2714,20 @@ const (
 	// Allows sending voice messages.
 	PermissionSendVoiceMessages = 1 << 46
 
+	// Allows setting the status of a voice channel.
+	PermissionSetVoiceChannelStatus = 1 << 48
+
 	// Allows sending polls.
 	PermissionSendPolls = 1 << 49
 
 	// Allows user-installed apps to send public responses. When disabled, users will still be allowed to use their apps but the responses will be ephemeral. This only applies to apps not also installed to the server.
 	PermissionUseExternalApps = 1 << 50
+
+	// Allows pinning and unpinning messages.
+	PermissionPinMessages = 1 << 51
+
+	// Allows bypassing slowmode restrictions.
+	PermissionBypassSlowmode = 1 << 52
 )
 
 // Constants for the different bit offsets of voice permissions
@@ -2841,7 +2850,19 @@ const (
 		PermissionEmbedLinks |
 		PermissionAttachFiles |
 		PermissionReadMessageHistory |
-		PermissionMentionEveryone
+		PermissionMentionEveryone |
+		PermissionUseExternalEmojis |
+		PermissionUseApplicationCommands |
+		PermissionManageThreads |
+		PermissionCreatePublicThreads |
+		PermissionCreatePrivateThreads |
+		PermissionUseExternalStickers |
+		PermissionSendMessagesInThreads |
+		PermissionSendVoiceMessages |
+		PermissionSendPolls |
+		PermissionUseExternalApps |
+		PermissionPinMessages |
+		PermissionBypassSlowmode
 	PermissionAllVoice = PermissionViewChannel |
 		PermissionVoiceConnect |
 		PermissionVoiceSpeak |
@@ -2849,21 +2870,35 @@ const (
 		PermissionVoiceDeafenMembers |
 		PermissionVoiceMoveMembers |
 		PermissionVoiceUseVAD |
-		PermissionVoicePrioritySpeaker
+		PermissionVoicePrioritySpeaker |
+		PermissionVoiceStreamVideo |
+		PermissionVoiceRequestToSpeak |
+		PermissionUseEmbeddedActivities |
+		PermissionUseSoundboard |
+		PermissionUseExternalSounds |
+		PermissionSetVoiceChannelStatus
 	PermissionAllChannel = PermissionAllText |
 		PermissionAllVoice |
 		PermissionCreateInstantInvite |
 		PermissionManageRoles |
 		PermissionManageChannels |
-		PermissionAddReactions |
-		PermissionViewAuditLogs
+		PermissionAddReactions
 	PermissionAll = PermissionAllChannel |
 		PermissionKickMembers |
 		PermissionBanMembers |
-		PermissionManageServer |
+		PermissionManageGuild |
 		PermissionAdministrator |
 		PermissionManageWebhooks |
-		PermissionManageEmojis
+		PermissionManageGuildExpressions |
+		PermissionViewAuditLogs |
+		PermissionViewGuildInsights |
+		PermissionChangeNickname |
+		PermissionManageNicknames |
+		PermissionManageEvents |
+		PermissionModerateMembers |
+		PermissionViewCreatorMonetizationAnalytics |
+		PermissionCreateGuildExpressions |
+		PermissionCreateEvents
 )
 
 // Block contains Discord JSON Error Response codes

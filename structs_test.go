@@ -55,6 +55,23 @@ func TestApplicationIntegrationTypesConfigJSONTag(t *testing.T) {
 	}
 }
 
+func TestCurrentPermissionConstantsAndAggregates(t *testing.T) {
+	if PermissionSetVoiceChannelStatus != 1<<48 {
+		t.Fatalf("PermissionSetVoiceChannelStatus = %#x", PermissionSetVoiceChannelStatus)
+	}
+	if PermissionPinMessages != 1<<51 {
+		t.Fatalf("PermissionPinMessages = %#x", PermissionPinMessages)
+	}
+	if PermissionBypassSlowmode != 1<<52 {
+		t.Fatalf("PermissionBypassSlowmode = %#x", PermissionBypassSlowmode)
+	}
+
+	current := int64(PermissionSetVoiceChannelStatus | PermissionPinMessages | PermissionBypassSlowmode)
+	if int64(PermissionAll)&current != current {
+		t.Fatalf("PermissionAll %#x does not include current permissions %#x", int64(PermissionAll), current)
+	}
+}
+
 func TestSticker_URL(t *testing.T) {
 	t.Run("png", func(t *testing.T) {
 		s := &Sticker{ID: "123", FormatType: StickerFormatTypePNG}

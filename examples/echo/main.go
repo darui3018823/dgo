@@ -38,7 +38,8 @@ func handleEcho(s *dgo.Session, i *dgo.InteractionCreate, opts optionMap) {
 	err := s.InteractionRespond(i.Interaction, &dgo.InteractionResponse{
 		Type: dgo.InteractionResponseChannelMessageWithSource,
 		Data: &dgo.InteractionResponseData{
-			Content: builder.String(),
+			Content:         builder.String(),
+			AllowedMentions: &dgo.MessageAllowedMentions{Parse: []dgo.AllowedMentionType{}},
 		},
 	})
 

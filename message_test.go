@@ -1,8 +1,66 @@
 package dgo
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 )
+
+func TestDefaultAllowedMentionsDisableParsing(t *testing.T) {
+	s, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mentions, err := s.resolveAllowedMentions(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(&MessageSend{Content: "hello <@1>", AllowedMentions: mentions})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"allowed_mentions":{"parse":[]`) {
+		t.Fatalf("message JSON does not disable mention parsing: %s", data)
+	}
+
+	mentions.Parse = append(mentions.Parse, AllowedMentionTypeEveryone)
+	if len(s.AllowedMentions.Parse) != 0 {
+		t.Fatal("resolved allowed mentions mutated the session default")
+	}
+}
+
+func TestValidateAllowedMentions(t *testing.T) {
+	oneHundredOne := make([]string, 101)
+	tests := map[string]*MessageAllowedMentions{
+		"roles parse and IDs": {
+			Parse: []AllowedMentionType{AllowedMentionTypeRoles},
+			Roles: []string{"1"},
+		},
+		"users parse and IDs": {
+			Parse: []AllowedMentionType{AllowedMentionTypeUsers},
+			Users: []string{"1"},
+		},
+		"too many roles": {
+			Roles: oneHundredOne,
+		},
+		"too many users": {
+			Users: oneHundredOne,
+		},
+		"duplicate parse": {
+			Parse: []AllowedMentionType{AllowedMentionTypeEveryone, AllowedMentionTypeEveryone},
+		},
+		"unknown parse": {
+			Parse: []AllowedMentionType{"channels"},
+		},
+	}
+	for name, mentions := range tests {
+		t.Run(name, func(t *testing.T) {
+			if err := validateAllowedMentions(mentions); err == nil {
+				t.Fatal("validateAllowedMentions succeeded")
+			}
+		})
+	}
+}
 
 func TestContentWithMoreMentionsReplaced(t *testing.T) {
 	s := &Session{StateEnabled: true, State: NewState()}

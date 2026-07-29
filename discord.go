@@ -44,6 +44,7 @@ func New(token string) (s *Session, err error) {
 		ShouldReconnectOnError:             true,
 		ShouldReconnectVoiceOnSessionError: true,
 		ShouldRetryOnRateLimit:             true,
+		AllowedMentions:                    &MessageAllowedMentions{Parse: []AllowedMentionType{}},
 		ShardID:                            0,
 		ShardCount:                         1,
 		MaxRestRetries:                     3,

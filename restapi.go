@@ -1893,6 +1893,14 @@ var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
 // channelID : The ID of a Channel.
 // data      : The message struct to send.
 func (s *Session) ChannelMessageSendComplex(channelID string, data *MessageSend, options ...RequestOption) (st *Message, err error) {
+	if data == nil {
+		return nil, fmt.Errorf("message data must not be nil")
+	}
+	data.AllowedMentions, err = s.resolveAllowedMentions(data.AllowedMentions)
+	if err != nil {
+		return nil, err
+	}
+
 	// TODO: Remove this when compatibility is not required.
 	if data.Embed != nil {
 		if data.Embeds == nil {
@@ -2020,6 +2028,14 @@ func (s *Session) ChannelMessageEdit(channelID, messageID, content string, optio
 // ChannelMessageEditComplex edits an existing message, replacing it entirely with
 // the given MessageEdit struct
 func (s *Session) ChannelMessageEditComplex(m *MessageEdit, options ...RequestOption) (st *Message, err error) {
+	if m == nil {
+		return nil, fmt.Errorf("message edit data must not be nil")
+	}
+	m.AllowedMentions, err = s.resolveAllowedMentions(m.AllowedMentions)
+	if err != nil {
+		return nil, err
+	}
+
 	// TODO: Remove this when compatibility is not required.
 	if m.Embed != nil {
 		if m.Embeds == nil {
@@ -2557,6 +2573,14 @@ func (s *Session) WebhookDeleteWithToken(webhookID, token string, options ...Req
 }
 
 func (s *Session) webhookExecute(webhookID, token string, wait bool, threadID string, data *WebhookParams, options ...RequestOption) (st *Message, err error) {
+	if data == nil {
+		return nil, fmt.Errorf("webhook data must not be nil")
+	}
+	data.AllowedMentions, err = s.resolveAllowedMentions(data.AllowedMentions)
+	if err != nil {
+		return nil, err
+	}
+
 	uri := EndpointWebhookToken(webhookID, token)
 
 	v := url.Values{}
@@ -2629,6 +2653,14 @@ func (s *Session) WebhookMessage(webhookID, token, messageID string, options ...
 // token     : The auth token for the webhook
 // messageID : The ID of message to edit
 func (s *Session) WebhookMessageEdit(webhookID, token, messageID string, data *WebhookEdit, options ...RequestOption) (st *Message, err error) {
+	if data == nil {
+		return nil, fmt.Errorf("webhook edit data must not be nil")
+	}
+	data.AllowedMentions, err = s.resolveAllowedMentions(data.AllowedMentions)
+	if err != nil {
+		return nil, err
+	}
+
 	uri := EndpointWebhookMessage(webhookID, token, messageID)
 
 	var response []byte
@@ -2817,6 +2849,14 @@ func (s *Session) ThreadStart(channelID, name string, typ ChannelType, archiveDu
 // threadData  : Parameters of the thread.
 // messageData : Parameters of the starting message.
 func (s *Session) ForumThreadStartComplex(channelID string, threadData *ThreadStart, messageData *MessageSend, options ...RequestOption) (th *Channel, err error) {
+	if threadData == nil || messageData == nil {
+		return nil, fmt.Errorf("thread and message data must not be nil")
+	}
+	messageData.AllowedMentions, err = s.resolveAllowedMentions(messageData.AllowedMentions)
+	if err != nil {
+		return nil, err
+	}
+
 	endpoint := EndpointChannelThreads(channelID)
 
 	// TODO: Remove this when compatibility is not required.
@@ -3280,6 +3320,17 @@ func (s *Session) ApplicationCommandPermissionsBatchEdit(appID, guildID string, 
 // interaction : Interaction instance.
 // resp        : Response message data.
 func (s *Session) InteractionRespond(interaction *Interaction, resp *InteractionResponse, options ...RequestOption) error {
+	if interaction == nil || resp == nil {
+		return fmt.Errorf("interaction and response must not be nil")
+	}
+	if resp.Data != nil {
+		allowedMentions, err := s.resolveAllowedMentions(resp.Data.AllowedMentions)
+		if err != nil {
+			return err
+		}
+		resp.Data.AllowedMentions = allowedMentions
+	}
+
 	endpoint := EndpointInteractionResponse(interaction.ID, interaction.Token)
 
 	if resp.Data != nil && len(resp.Data.Files) > 0 {

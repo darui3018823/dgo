@@ -11,6 +11,7 @@ package dgo
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"regexp"
 	"strings"
@@ -348,6 +349,63 @@ type MessageAllowedMentions struct {
 
 	// For replies, whether to mention the author of the message being replied to
 	RepliedUser bool `json:"replied_user"`
+}
+
+func cloneAllowedMentions(mentions *MessageAllowedMentions) *MessageAllowedMentions {
+	if mentions == nil {
+		return nil
+	}
+	cloned := *mentions
+	cloned.Parse = append(make([]AllowedMentionType, 0, len(mentions.Parse)), mentions.Parse...)
+	cloned.Roles = append([]string(nil), mentions.Roles...)
+	cloned.Users = append([]string(nil), mentions.Users...)
+	return &cloned
+}
+
+func validateAllowedMentions(mentions *MessageAllowedMentions) error {
+	if mentions == nil {
+		return nil
+	}
+	if len(mentions.Roles) > 100 {
+		return fmt.Errorf("allowed mentions cannot contain more than 100 role IDs")
+	}
+	if len(mentions.Users) > 100 {
+		return fmt.Errorf("allowed mentions cannot contain more than 100 user IDs")
+	}
+
+	seen := make(map[AllowedMentionType]struct{}, len(mentions.Parse))
+	for _, mentionType := range mentions.Parse {
+		switch mentionType {
+		case AllowedMentionTypeRoles, AllowedMentionTypeUsers, AllowedMentionTypeEveryone:
+		default:
+			return fmt.Errorf("invalid allowed mention type %q", mentionType)
+		}
+		if _, exists := seen[mentionType]; exists {
+			return fmt.Errorf("duplicate allowed mention type %q", mentionType)
+		}
+		seen[mentionType] = struct{}{}
+	}
+	if _, parsesRoles := seen[AllowedMentionTypeRoles]; parsesRoles && len(mentions.Roles) != 0 {
+		return fmt.Errorf("allowed mentions cannot specify both parse roles and role IDs")
+	}
+	if _, parsesUsers := seen[AllowedMentionTypeUsers]; parsesUsers && len(mentions.Users) != 0 {
+		return fmt.Errorf("allowed mentions cannot specify both parse users and user IDs")
+	}
+	return nil
+}
+
+func (s *Session) resolveAllowedMentions(mentions *MessageAllowedMentions) (*MessageAllowedMentions, error) {
+	if mentions == nil {
+		s.RLock()
+		mentions = cloneAllowedMentions(s.AllowedMentions)
+		s.RUnlock()
+	} else {
+		mentions = cloneAllowedMentions(mentions)
+	}
+	if err := validateAllowedMentions(mentions); err != nil {
+		return nil, err
+	}
+	return mentions, nil
 }
 
 // A MessageAttachment stores data for message attachments.

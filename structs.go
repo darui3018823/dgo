@@ -52,6 +52,10 @@ type Session struct {
 	// Should the session retry requests when rate limited.
 	ShouldRetryOnRateLimit bool
 
+	// AllowedMentions is used when a message does not provide an explicit
+	// allowed_mentions object. New sessions default to parsing no mentions.
+	AllowedMentions *MessageAllowedMentions
+
 	// Identify is sent during initial handshake with the discord gateway.
 	// https://discord.com/developers/docs/topics/gateway#identify
 	Identify Identify

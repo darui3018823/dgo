@@ -364,6 +364,13 @@ const (
 	ForumLayoutGalleryView ForumLayout = 2
 )
 
+// ChannelInfoChannel contains requested ephemeral fields for one channel.
+type ChannelInfoChannel struct {
+	ID             string  `json:"id"`
+	Status         *string `json:"status,omitempty"`
+	VoiceStartTime *int64  `json:"voice_start_time,omitempty"`
+}
+
 // A Channel holds all data related to an individual Discord channel.
 type Channel struct {
 	// The ID of the channel.

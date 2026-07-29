@@ -68,6 +68,13 @@ type ChannelPinsUpdate struct {
 	GuildID          string `json:"guild_id,omitempty"`
 }
 
+// ChannelInfo contains ephemeral information for channels in a guild. It is
+// sent in response to a Request Channel Info gateway command.
+type ChannelInfo struct {
+	GuildID  string               `json:"guild_id"`
+	Channels []ChannelInfoChannel `json:"channels"`
+}
+
 // ThreadCreate is the data for a ThreadCreate event.
 type ThreadCreate struct {
 	*Channel
@@ -360,7 +367,7 @@ type VoiceStateUpdate struct {
 type VoiceChannelStartTimeUpdate struct {
 	ID             string `json:"id"`
 	GuildID        string `json:"guild_id"`
-	VoiceStartTime int64  `json:"voice_start_time"`
+	VoiceStartTime *int64 `json:"voice_start_time"`
 }
 
 // VoiceChannelStatusUpdate is the data for a VoiceChannelStatusUpdate event.

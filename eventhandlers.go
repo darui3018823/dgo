@@ -14,6 +14,7 @@ const (
 	autoModerationRuleUpdateEventType            = "AUTO_MODERATION_RULE_UPDATE"
 	channelCreateEventType                       = "CHANNEL_CREATE"
 	channelDeleteEventType                       = "CHANNEL_DELETE"
+	channelInfoEventType                         = "CHANNEL_INFO"
 	channelPinsUpdateEventType                   = "CHANNEL_PINS_UPDATE"
 	channelUpdateEventType                       = "CHANNEL_UPDATE"
 	connectEventType                             = "__CONNECT__"
@@ -220,6 +221,26 @@ func (eh channelDeleteEventHandler) New() interface{} {
 // Handle is the handler for ChannelDelete events.
 func (eh channelDeleteEventHandler) Handle(s *Session, i interface{}) {
 	if t, ok := i.(*ChannelDelete); ok {
+		eh(s, t)
+	}
+}
+
+// channelInfoEventHandler is an event handler for ChannelInfo events.
+type channelInfoEventHandler func(*Session, *ChannelInfo)
+
+// Type returns the event type for ChannelInfo events.
+func (eh channelInfoEventHandler) Type() string {
+	return channelInfoEventType
+}
+
+// New returns a new instance of ChannelInfo.
+func (eh channelInfoEventHandler) New() interface{} {
+	return &ChannelInfo{}
+}
+
+// Handle is the handler for ChannelInfo events.
+func (eh channelInfoEventHandler) Handle(s *Session, i interface{}) {
+	if t, ok := i.(*ChannelInfo); ok {
 		eh(s, t)
 	}
 }
@@ -1582,6 +1603,8 @@ func handlerForInterface(handler interface{}) EventHandler {
 		return channelCreateEventHandler(v)
 	case func(*Session, *ChannelDelete):
 		return channelDeleteEventHandler(v)
+	case func(*Session, *ChannelInfo):
+		return channelInfoEventHandler(v)
 	case func(*Session, *ChannelPinsUpdate):
 		return channelPinsUpdateEventHandler(v)
 	case func(*Session, *ChannelUpdate):
@@ -1731,6 +1754,7 @@ func init() {
 	registerInterfaceProvider(autoModerationRuleUpdateEventHandler(nil))
 	registerInterfaceProvider(channelCreateEventHandler(nil))
 	registerInterfaceProvider(channelDeleteEventHandler(nil))
+	registerInterfaceProvider(channelInfoEventHandler(nil))
 	registerInterfaceProvider(channelPinsUpdateEventHandler(nil))
 	registerInterfaceProvider(channelUpdateEventHandler(nil))
 	registerInterfaceProvider(entitlementCreateEventHandler(nil))

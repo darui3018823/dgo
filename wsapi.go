@@ -472,6 +472,56 @@ type requestGuildMembersOp struct {
 	Data requestGuildMembersData `json:"d"`
 }
 
+// ChannelInfoField identifies an ephemeral channel field that can be requested
+// from the Gateway.
+type ChannelInfoField string
+
+// Fields supported by RequestChannelInfo.
+const (
+	ChannelInfoFieldStatus         ChannelInfoField = "status"
+	ChannelInfoFieldVoiceStartTime ChannelInfoField = "voice_start_time"
+)
+
+type requestChannelInfoData struct {
+	GuildID string             `json:"guild_id"`
+	Fields  []ChannelInfoField `json:"fields"`
+}
+
+type requestChannelInfoOp struct {
+	Op   int                    `json:"op"`
+	Data requestChannelInfoData `json:"d"`
+}
+
+// RequestChannelInfo requests ephemeral voice channel information for a guild.
+// The Gateway responds with a ChannelInfo event.
+func (s *Session) RequestChannelInfo(guildID string, fields ...ChannelInfoField) error {
+	if guildID == "" {
+		return errors.New("guild ID must not be empty")
+	}
+	if len(fields) == 0 {
+		return errors.New("at least one channel info field is required")
+	}
+	seen := make(map[ChannelInfoField]struct{}, len(fields))
+	for _, field := range fields {
+		switch field {
+		case ChannelInfoFieldStatus, ChannelInfoFieldVoiceStartTime:
+		default:
+			return fmt.Errorf("unsupported channel info field %q", field)
+		}
+		if _, exists := seen[field]; exists {
+			return fmt.Errorf("channel info field %q is duplicated", field)
+		}
+		seen[field] = struct{}{}
+	}
+	return s.GatewayWriteStruct(requestChannelInfoOp{
+		Op: 43,
+		Data: requestChannelInfoData{
+			GuildID: guildID,
+			Fields:  append([]ChannelInfoField(nil), fields...),
+		},
+	})
+}
+
 // RequestGuildMembers requests guild members from the gateway
 // The gateway responds with GuildMembersChunk events
 // guildID   : Single Guild ID to request members of

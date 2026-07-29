@@ -421,6 +421,51 @@ func TestChannelMessagePinUsesCurrentRoute(t *testing.T) {
 	}
 }
 
+func TestChannelVoiceStatusUpdate(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		if request.Method != http.MethodPut {
+			t.Errorf("method = %q", request.Method)
+		}
+		if request.URL.Path != "/api/v10/channels/channel/voice-status" {
+			t.Errorf("path = %q", request.URL.Path)
+		}
+		body, readErr := io.ReadAll(request.Body)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		want := `{"status":"Town hall"}`
+		if requests == 2 {
+			want = `{"status":null}`
+		}
+		if string(body) != want {
+			t.Errorf("body = %s, want %s", body, want)
+		}
+		return jsonResponse(http.StatusNoContent, ``), nil
+	})
+
+	status := "Town hall"
+	if err = session.ChannelVoiceStatusUpdate("channel", &status); err != nil {
+		t.Fatal(err)
+	}
+	if err = session.ChannelVoiceStatusUpdate("channel", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	tooLong := strings.Repeat("声", 501)
+	if err = session.ChannelVoiceStatusUpdate("channel", &tooLong); err == nil {
+		t.Fatal("accepted voice channel status longer than 500 characters")
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+}
+
 func TestEntitlementHelpersReturnResponses(t *testing.T) {
 	session, err := New("Bot token")
 	if err != nil {

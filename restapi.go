@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"context"
 )
@@ -1795,6 +1796,20 @@ func (s *Session) ChannelEdit(channelID string, data *ChannelEdit, options ...Re
 	err = unmarshal(body, &st)
 	return
 
+}
+
+// ChannelVoiceStatusUpdate sets or clears a voice channel's status.
+// Pass nil to clear the status.
+func (s *Session) ChannelVoiceStatusUpdate(channelID string, status *string, options ...RequestOption) error {
+	if status != nil && utf8.RuneCountInString(*status) > 500 {
+		return fmt.Errorf("voice channel status must be at most 500 characters")
+	}
+	endpoint := EndpointChannelVoiceStatus(channelID)
+	data := struct {
+		Status *string `json:"status"`
+	}{Status: status}
+	_, err := s.RequestWithBucketID("PUT", endpoint, data, endpoint, options...)
+	return err
 }
 
 // ChannelEditComplex edits an existing channel, replacing the parameters entirely with ChannelEdit struct

@@ -127,6 +127,7 @@ var (
 	}
 
 	EndpointChannel                             = func(cID string) string { return EndpointChannels + cID }
+	EndpointChannelVoiceStatus                  = func(cID string) string { return EndpointChannel(cID) + "/voice-status" }
 	EndpointChannelThreads                      = func(cID string) string { return EndpointChannel(cID) + "/threads" }
 	EndpointChannelActiveThreads                = func(cID string) string { return EndpointChannelThreads(cID) + "/active" }
 	EndpointChannelPublicArchivedThreads        = func(cID string) string { return EndpointChannelThreads(cID) + "/archived/public" }

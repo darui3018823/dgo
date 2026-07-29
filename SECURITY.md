@@ -42,3 +42,18 @@ behavior, and dependency vulnerabilities are in scope.
 
 Discord platform abuse that does not arise from a defect in dgo should be
 reported to Discord through its own safety or security channels.
+
+## Code scanning triage
+
+CodeQL and dependency alerts remain open until a fix is merged or the finding
+is proven not to affect this repository. A dismissal requires:
+
+- a written technical rationale linked to the affected code path;
+- a second maintainer's review;
+- a regression test or other evidence when the alert is reachable; and
+- a re-review date for `risk accepted` decisions.
+
+Dismissals are reviewed before every release and at least quarterly. An alert
+must be reopened when its assumptions, dependency version, or affected code
+changes. `False positive` is reserved for a demonstrated analyzer mismatch,
+not for low exploitability or inconvenient remediation.

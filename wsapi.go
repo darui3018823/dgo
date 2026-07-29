@@ -301,7 +301,8 @@ func (s *Session) listen(wsConn *websocket.Conn, listening <-chan interface{}) {
 
 				s.log(LogWarning, "error reading from gateway %s websocket, %s", s.gateway, err)
 				action := gatewayReconnectActionForError(err)
-				if action != gatewayReconnectResume {
+				s.handleEvent(gatewayCloseEventType, newGatewayCloseEvent(err, action))
+				if action != GatewayCloseRecoveryResume {
 					s.invalidateGatewaySession()
 				}
 				// There has been an error reading, close the websocket so that
@@ -311,7 +312,7 @@ func (s *Session) listen(wsConn *websocket.Conn, listening <-chan interface{}) {
 					s.log(LogWarning, "error closing session connection, %s", closeErr)
 				}
 
-				if action == gatewayReconnectStop {
+				if action == GatewayCloseRecoveryStop {
 					s.log(LogError, "gateway closed with a terminal error; automatic reconnect stopped")
 				} else {
 					s.log(LogInformational, "calling reconnect() now")
@@ -334,27 +335,29 @@ func (s *Session) listen(wsConn *websocket.Conn, listening <-chan interface{}) {
 	}
 }
 
-type gatewayReconnectAction uint8
-
-const (
-	gatewayReconnectStop gatewayReconnectAction = iota
-	gatewayReconnectResume
-	gatewayReconnectIdentify
-)
-
-func gatewayReconnectActionForError(err error) gatewayReconnectAction {
+func gatewayReconnectActionForError(err error) GatewayCloseRecovery {
 	var closeError *websocket.CloseError
 	if !errors.As(err, &closeError) {
-		return gatewayReconnectResume
+		return GatewayCloseRecoveryResume
 	}
 	switch closeError.Code {
 	case 4004, 4010, 4011, 4012, 4013, 4014:
-		return gatewayReconnectStop
+		return GatewayCloseRecoveryStop
 	case websocket.CloseNormalClosure, websocket.CloseGoingAway, 4007, 4009:
-		return gatewayReconnectIdentify
+		return GatewayCloseRecoveryIdentify
 	default:
-		return gatewayReconnectResume
+		return GatewayCloseRecoveryResume
 	}
+}
+
+func newGatewayCloseEvent(err error, recovery GatewayCloseRecovery) *GatewayClose {
+	event := &GatewayClose{Recovery: recovery, Err: err}
+	var closeError *websocket.CloseError
+	if errors.As(err, &closeError) {
+		event.Code = closeError.Code
+		event.Reason = closeError.Text
+	}
+	return event
 }
 
 type heartbeatOp struct {

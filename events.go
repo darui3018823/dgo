@@ -18,6 +18,16 @@ type Connect struct{}
 // This is a synthetic event and is not dispatched by Discord.
 type Disconnect struct{}
 
+// GatewayClose is emitted when a Gateway read fails. Code and Reason are set
+// for WebSocket close frames. Err retains the transport error for diagnostics.
+// This is a synthetic event and is not dispatched by Discord.
+type GatewayClose struct {
+	Code     int
+	Reason   string
+	Recovery GatewayCloseRecovery
+	Err      error
+}
+
 // RateLimit is the data for a RateLimit event.
 // This is a synthetic event and is not dispatched by Discord.
 type RateLimit struct {

@@ -23,6 +23,7 @@ const (
 	entitlementDeleteEventType                   = "ENTITLEMENT_DELETE"
 	entitlementUpdateEventType                   = "ENTITLEMENT_UPDATE"
 	eventEventType                               = "__EVENT__"
+	gatewayCloseEventType                        = "__GATEWAY_CLOSE__"
 	gatewayRateLimitedEventType                  = "RATE_LIMITED"
 	guildAuditLogEntryCreateEventType            = "GUILD_AUDIT_LOG_ENTRY_CREATE"
 	guildBanAddEventType                         = "GUILD_BAN_ADD"
@@ -388,6 +389,21 @@ func (eh eventEventHandler) Type() string {
 // Handle is the handler for Event events.
 func (eh eventEventHandler) Handle(s *Session, i interface{}) {
 	if t, ok := i.(*Event); ok {
+		eh(s, t)
+	}
+}
+
+// gatewayCloseEventHandler is an event handler for GatewayClose events.
+type gatewayCloseEventHandler func(*Session, *GatewayClose)
+
+// Type returns the event type for GatewayClose events.
+func (eh gatewayCloseEventHandler) Type() string {
+	return gatewayCloseEventType
+}
+
+// Handle is the handler for GatewayClose events.
+func (eh gatewayCloseEventHandler) Handle(s *Session, i interface{}) {
+	if t, ok := i.(*GatewayClose); ok {
 		eh(s, t)
 	}
 }
@@ -1663,6 +1679,8 @@ func handlerForInterface(handler interface{}) EventHandler {
 		return entitlementUpdateEventHandler(v)
 	case func(*Session, *Event):
 		return eventEventHandler(v)
+	case func(*Session, *GatewayClose):
+		return gatewayCloseEventHandler(v)
 	case func(*Session, *GatewayRateLimited):
 		return gatewayRateLimitedEventHandler(v)
 	case func(*Session, *GuildAuditLogEntryCreate):

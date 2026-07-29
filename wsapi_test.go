@@ -276,21 +276,21 @@ func TestGatewayCloseCodeClassification(t *testing.T) {
 	tests := []struct {
 		name string
 		err  error
-		want gatewayReconnectAction
+		want GatewayCloseRecovery
 	}{
-		{name: "network error", err: errors.New("network"), want: gatewayReconnectResume},
-		{name: "unknown error", err: &websocket.CloseError{Code: 4000}, want: gatewayReconnectResume},
-		{name: "rate limited", err: &websocket.CloseError{Code: 4008}, want: gatewayReconnectResume},
-		{name: "normal closure", err: &websocket.CloseError{Code: 1000}, want: gatewayReconnectIdentify},
-		{name: "going away", err: &websocket.CloseError{Code: 1001}, want: gatewayReconnectIdentify},
-		{name: "invalid sequence", err: &websocket.CloseError{Code: 4007}, want: gatewayReconnectIdentify},
-		{name: "session timeout", err: &websocket.CloseError{Code: 4009}, want: gatewayReconnectIdentify},
-		{name: "authentication failed", err: &websocket.CloseError{Code: 4004}, want: gatewayReconnectStop},
-		{name: "invalid shard", err: &websocket.CloseError{Code: 4010}, want: gatewayReconnectStop},
-		{name: "sharding required", err: &websocket.CloseError{Code: 4011}, want: gatewayReconnectStop},
-		{name: "invalid API version", err: &websocket.CloseError{Code: 4012}, want: gatewayReconnectStop},
-		{name: "invalid intents", err: &websocket.CloseError{Code: 4013}, want: gatewayReconnectStop},
-		{name: "disallowed intents", err: &websocket.CloseError{Code: 4014}, want: gatewayReconnectStop},
+		{name: "network error", err: errors.New("network"), want: GatewayCloseRecoveryResume},
+		{name: "unknown error", err: &websocket.CloseError{Code: 4000}, want: GatewayCloseRecoveryResume},
+		{name: "rate limited", err: &websocket.CloseError{Code: 4008}, want: GatewayCloseRecoveryResume},
+		{name: "normal closure", err: &websocket.CloseError{Code: 1000}, want: GatewayCloseRecoveryIdentify},
+		{name: "going away", err: &websocket.CloseError{Code: 1001}, want: GatewayCloseRecoveryIdentify},
+		{name: "invalid sequence", err: &websocket.CloseError{Code: 4007}, want: GatewayCloseRecoveryIdentify},
+		{name: "session timeout", err: &websocket.CloseError{Code: 4009}, want: GatewayCloseRecoveryIdentify},
+		{name: "authentication failed", err: &websocket.CloseError{Code: 4004}, want: GatewayCloseRecoveryStop},
+		{name: "invalid shard", err: &websocket.CloseError{Code: 4010}, want: GatewayCloseRecoveryStop},
+		{name: "sharding required", err: &websocket.CloseError{Code: 4011}, want: GatewayCloseRecoveryStop},
+		{name: "invalid API version", err: &websocket.CloseError{Code: 4012}, want: GatewayCloseRecoveryStop},
+		{name: "invalid intents", err: &websocket.CloseError{Code: 4013}, want: GatewayCloseRecoveryStop},
+		{name: "disallowed intents", err: &websocket.CloseError{Code: 4014}, want: GatewayCloseRecoveryStop},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -298,6 +298,20 @@ func TestGatewayCloseCodeClassification(t *testing.T) {
 				t.Fatalf("action = %d, want %d", got, test.want)
 			}
 		})
+	}
+}
+
+func TestGatewayCloseEventExposesTerminalFailure(t *testing.T) {
+	closeErr := &websocket.CloseError{Code: 4014, Text: "disallowed intents"}
+	event := newGatewayCloseEvent(closeErr, gatewayReconnectActionForError(closeErr))
+	if event.Code != 4014 ||
+		event.Reason != "disallowed intents" ||
+		event.Recovery != GatewayCloseRecoveryStop ||
+		!errors.Is(event.Err, closeErr) {
+		t.Fatalf("gateway close event = %#v", event)
+	}
+	if handlerForInterface(func(*Session, *GatewayClose) {}) == nil {
+		t.Fatal("typed GatewayClose handler was not generated")
 	}
 }
 

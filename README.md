@@ -15,7 +15,7 @@ with its own compatibility and release policy.
 - Context-aware REST rate limiting and bounded retries
 - Structured logging with credential redaction
 - Safe defaults: no Gateway intents and no parsed mentions unless enabled
-- Go 1.24 or newer
+- Go 1.26 or newer
 
 ## Install
 

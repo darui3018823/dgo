@@ -1044,6 +1044,12 @@ type Guild struct {
 
 	// Stage instances in the guild
 	StageInstances []*StageInstance `json:"stage_instances"`
+
+	// The welcome screen shown to new members of a Community guild.
+	WelcomeScreen *GuildWelcomeScreen `json:"welcome_screen,omitempty"`
+
+	// The active safety incident actions and detections for the guild.
+	IncidentsData *IncidentsData `json:"incidents_data"`
 }
 
 // A GuildPreview holds data related to a specific public Discord Guild, even if the user is not in the guild.
@@ -1648,6 +1654,21 @@ type VoiceState struct {
 	RequestToSpeakTimestamp *time.Time `json:"request_to_speak_timestamp"`
 }
 
+// UserVoiceStateEditParams contains fields accepted when modifying another
+// user's voice state.
+type UserVoiceStateEditParams struct {
+	ChannelID *string `json:"channel_id,omitempty"`
+	Suppress  *bool   `json:"suppress,omitempty"`
+}
+
+// CurrentUserVoiceStateEditParams contains fields accepted when modifying the
+// current user's voice state. A non-nil outer pointer containing a nil
+// RequestToSpeakTimestamp encodes JSON null and clears the request to speak.
+type CurrentUserVoiceStateEditParams struct {
+	UserVoiceStateEditParams
+	RequestToSpeakTimestamp **time.Time `json:"request_to_speak_timestamp,omitempty"`
+}
+
 // A Presence stores the online, offline, or idle and game status of Guild members.
 type Presence struct {
 	User         *User        `json:"user"`
@@ -1972,6 +1993,83 @@ type AutoModerationAction struct {
 type GuildEmbed struct {
 	Enabled   *bool  `json:"enabled,omitempty"`
 	ChannelID string `json:"channel_id,omitempty"`
+}
+
+// GuildWidget contains the public widget data exposed by a guild.
+type GuildWidget struct {
+	ID            string               `json:"id"`
+	Name          string               `json:"name"`
+	InstantInvite *string              `json:"instant_invite"`
+	Channels      []*Channel           `json:"channels"`
+	Members       []*GuildWidgetMember `json:"members"`
+	PresenceCount int                  `json:"presence_count"`
+}
+
+// GuildWidgetMember is the anonymized user and presence data returned in a
+// public guild widget.
+type GuildWidgetMember struct {
+	ID            string  `json:"id"`
+	Username      string  `json:"username"`
+	Discriminator string  `json:"discriminator"`
+	Avatar        *string `json:"avatar"`
+	Status        Status  `json:"status"`
+	AvatarURL     string  `json:"avatar_url"`
+}
+
+// GuildVanityURL contains the partial invite returned for a guild vanity URL.
+type GuildVanityURL struct {
+	Code *string `json:"code"`
+	Uses int     `json:"uses"`
+}
+
+// GuildWelcomeScreen is the welcome screen shown to new guild members.
+type GuildWelcomeScreen struct {
+	Description     *string                      `json:"description"`
+	WelcomeChannels []*GuildWelcomeScreenChannel `json:"welcome_channels"`
+}
+
+// GuildWelcomeScreenChannel is a channel displayed on a guild welcome screen.
+type GuildWelcomeScreenChannel struct {
+	ChannelID   string  `json:"channel_id"`
+	Description string  `json:"description"`
+	EmojiID     *string `json:"emoji_id"`
+	EmojiName   *string `json:"emoji_name"`
+}
+
+// GuildWelcomeScreenEditParams contains optional and nullable welcome-screen
+// fields. A non-nil outer pointer containing nil encodes JSON null.
+type GuildWelcomeScreenEditParams struct {
+	Enabled         **bool                        `json:"enabled,omitempty"`
+	WelcomeChannels *[]*GuildWelcomeScreenChannel `json:"welcome_channels,omitempty"`
+	Description     **string                      `json:"description,omitempty"`
+}
+
+// IncidentsData describes active safety actions and detected incidents.
+type IncidentsData struct {
+	InvitesDisabledUntil *time.Time `json:"invites_disabled_until"`
+	DMsDisabledUntil     *time.Time `json:"dms_disabled_until"`
+	DMSpamDetectedAt     *time.Time `json:"dm_spam_detected_at,omitempty"`
+	RaidDetectedAt       *time.Time `json:"raid_detected_at,omitempty"`
+}
+
+// GuildIncidentActionsEditParams contains optional and nullable incident
+// actions. A non-nil outer pointer containing nil disables the action.
+type GuildIncidentActionsEditParams struct {
+	InvitesDisabledUntil **time.Time `json:"invites_disabled_until,omitempty"`
+	DMsDisabledUntil     **time.Time `json:"dms_disabled_until,omitempty"`
+}
+
+// GuildBulkBanParams contains the users and message history window for a bulk
+// guild ban.
+type GuildBulkBanParams struct {
+	UserIDs              []string `json:"user_ids"`
+	DeleteMessageSeconds int      `json:"delete_message_seconds,omitempty"`
+}
+
+// GuildBulkBanResponse reports which users were and were not banned.
+type GuildBulkBanResponse struct {
+	BannedUsers []string `json:"banned_users"`
+	FailedUsers []string `json:"failed_users"`
 }
 
 // A GuildAuditLog stores data for a guild audit log.

@@ -1405,6 +1405,27 @@ func (s *Session) GuildBanDelete(guildID, userID string, options ...RequestOptio
 	return
 }
 
+// GuildBulkBan bans up to 200 users from a guild.
+func (s *Session) GuildBulkBan(guildID string, data *GuildBulkBanParams, options ...RequestOption) (st *GuildBulkBanResponse, err error) {
+	if data == nil {
+		return nil, fmt.Errorf("bulk ban parameters cannot be nil")
+	}
+	if len(data.UserIDs) == 0 || len(data.UserIDs) > 200 {
+		return nil, fmt.Errorf("bulk ban must contain between 1 and 200 user IDs")
+	}
+	if data.DeleteMessageSeconds < 0 || data.DeleteMessageSeconds > 604800 {
+		return nil, fmt.Errorf("delete message seconds must be between 0 and 604800")
+	}
+
+	endpoint := EndpointGuildBulkBan(guildID)
+	body, err := s.RequestWithBucketID(http.MethodPost, endpoint, data, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &st)
+	return
+}
+
 // GuildMembers returns a list of members for a guild.
 // guildID  : The ID of a Guild.
 // after    : The id of the member to return members after
@@ -1731,6 +1752,34 @@ func (s *Session) GuildRoles(guildID string, options ...RequestOption) (st []*Ro
 	return // TODO return pointer
 }
 
+// GuildRole returns a role from a guild.
+func (s *Session) GuildRole(guildID, roleID string, options ...RequestOption) (st *Role, err error) {
+	body, err := s.RequestWithBucketID(
+		http.MethodGet,
+		EndpointGuildRole(guildID, roleID),
+		nil,
+		EndpointGuildRole(guildID, ""),
+		options...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &st)
+	return
+}
+
+// GuildRoleMemberCounts returns a map of role IDs to member counts. The
+// @everyone role is not included.
+func (s *Session) GuildRoleMemberCounts(guildID string, options ...RequestOption) (memberCounts map[string]uint64, err error) {
+	endpoint := EndpointGuildRoleMemberCounts(guildID)
+	body, err := s.RequestWithBucketID(http.MethodGet, endpoint, nil, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &memberCounts)
+	return
+}
+
 // GuildRoleCreate creates a new Guild Role and returns it.
 // guildID : The ID of a Guild.
 // data    : New Role parameters.
@@ -2017,6 +2066,72 @@ func (s *Session) GuildEmbed(guildID string, options ...RequestOption) (st *Guil
 // data      : New GuildEmbed data.
 func (s *Session) GuildEmbedEdit(guildID string, data *GuildEmbed, options ...RequestOption) (err error) {
 	_, err = s.RequestWithBucketID("PATCH", EndpointGuildEmbed(guildID), data, EndpointGuildEmbed(guildID), options...)
+	return
+}
+
+// GuildWidget returns the public widget for a Guild.
+func (s *Session) GuildWidget(guildID string, options ...RequestOption) (st *GuildWidget, err error) {
+	endpoint := EndpointGuildWidgetJSON(guildID)
+	body, err := s.RequestWithBucketID(http.MethodGet, endpoint, nil, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &st)
+	return
+}
+
+// GuildVanityURL returns the partial invite for a guild vanity URL.
+func (s *Session) GuildVanityURL(guildID string, options ...RequestOption) (st *GuildVanityURL, err error) {
+	endpoint := EndpointGuildVanityURL(guildID)
+	body, err := s.RequestWithBucketID(http.MethodGet, endpoint, nil, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &st)
+	return
+}
+
+// GuildWelcomeScreen returns the welcome screen for a Guild.
+func (s *Session) GuildWelcomeScreen(guildID string, options ...RequestOption) (st *GuildWelcomeScreen, err error) {
+	endpoint := EndpointGuildWelcomeScreen(guildID)
+	body, err := s.RequestWithBucketID(http.MethodGet, endpoint, nil, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &st)
+	return
+}
+
+// GuildWelcomeScreenEdit modifies a guild welcome screen.
+func (s *Session) GuildWelcomeScreenEdit(guildID string, data *GuildWelcomeScreenEditParams, options ...RequestOption) (st *GuildWelcomeScreen, err error) {
+	if data == nil {
+		return nil, fmt.Errorf("welcome screen parameters cannot be nil")
+	}
+	if data.WelcomeChannels != nil && *data.WelcomeChannels != nil && len(*data.WelcomeChannels) > 5 {
+		return nil, fmt.Errorf("welcome screen cannot contain more than 5 channels")
+	}
+
+	endpoint := EndpointGuildWelcomeScreen(guildID)
+	body, err := s.RequestWithBucketID(http.MethodPatch, endpoint, data, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &st)
+	return
+}
+
+// GuildIncidentActionsEdit modifies the incident actions for a Guild.
+func (s *Session) GuildIncidentActionsEdit(guildID string, data *GuildIncidentActionsEditParams, options ...RequestOption) (st *IncidentsData, err error) {
+	if data == nil {
+		return nil, fmt.Errorf("incident action parameters cannot be nil")
+	}
+
+	endpoint := EndpointGuildIncidentActions(guildID)
+	body, err := s.RequestWithBucketID(http.MethodPut, endpoint, data, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &st)
 	return
 }
 
@@ -3069,6 +3184,56 @@ func (s *Session) InviteAccept(inviteID string, options ...RequestOption) (st *I
 // ------------------------------------------------------------------------------------------------
 // Functions specific to Discord Voice
 // ------------------------------------------------------------------------------------------------
+
+// CurrentUserVoiceState returns the current user's voice state in a guild.
+func (s *Session) CurrentUserVoiceState(guildID string, options ...RequestOption) (*VoiceState, error) {
+	return s.UserVoiceState(guildID, "@me", options...)
+}
+
+// UserVoiceState returns a user's voice state in a guild.
+func (s *Session) UserVoiceState(guildID, userID string, options ...RequestOption) (st *VoiceState, err error) {
+	endpoint := EndpointGuildVoiceState(guildID, userID)
+	body, err := s.RequestWithBucketID(http.MethodGet, endpoint, nil, EndpointGuildVoiceState(guildID, ""), options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &st)
+	return
+}
+
+// CurrentUserVoiceStateEdit modifies the current user's voice state in a guild.
+func (s *Session) CurrentUserVoiceStateEdit(guildID string, data *CurrentUserVoiceStateEditParams, options ...RequestOption) error {
+	if data == nil {
+		return fmt.Errorf("current user voice state parameters cannot be nil")
+	}
+	return s.userVoiceStateEdit(guildID, "@me", data, options...)
+}
+
+// UserVoiceStateEdit modifies another user's voice state in a guild.
+func (s *Session) UserVoiceStateEdit(guildID, userID string, data *UserVoiceStateEditParams, options ...RequestOption) error {
+	if data == nil {
+		return fmt.Errorf("user voice state parameters cannot be nil")
+	}
+	return s.userVoiceStateEdit(guildID, userID, data, options...)
+}
+
+func (s *Session) userVoiceStateEdit(guildID, userID string, data interface{}, options ...RequestOption) error {
+	endpoint := EndpointGuildVoiceState(guildID, userID)
+	_, err := s.RequestWithBucketID(http.MethodPatch, endpoint, data, EndpointGuildVoiceState(guildID, ""), options...)
+	return err
+}
+
+// GuildVoiceRegions returns the voice regions available to a guild, including
+// VIP regions when the guild is VIP-enabled.
+func (s *Session) GuildVoiceRegions(guildID string, options ...RequestOption) (st []*VoiceRegion, err error) {
+	endpoint := EndpointGuildVoiceRegions(guildID)
+	body, err := s.RequestWithBucketID(http.MethodGet, endpoint, nil, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &st)
+	return
+}
 
 // VoiceRegions returns the voice server regions
 func (s *Session) VoiceRegions(options ...RequestOption) (st []*VoiceRegion, err error) {

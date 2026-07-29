@@ -1065,6 +1065,39 @@ func (s *Session) UserChannelCreate(recipientID string, options ...RequestOption
 	return
 }
 
+// GroupDMCreate creates a group DM with multiple users. Every access token
+// must belong to a user who granted the application the gdm.join OAuth2 scope.
+func (s *Session) GroupDMCreate(data *GroupDMCreateParams, options ...RequestOption) (st *Channel, err error) {
+	if data == nil {
+		return nil, fmt.Errorf("group DM parameters cannot be nil")
+	}
+	if len(data.AccessTokens) < 2 {
+		return nil, fmt.Errorf("group DM requires access tokens for at least two users")
+	}
+	for i, token := range data.AccessTokens {
+		if strings.TrimSpace(token) == "" {
+			return nil, fmt.Errorf("group DM access token %d cannot be empty", i)
+		}
+	}
+	if data.Nicks == nil {
+		return nil, fmt.Errorf("group DM nicknames cannot be nil")
+	}
+	for userID := range data.Nicks {
+		if strings.TrimSpace(userID) == "" {
+			return nil, fmt.Errorf("group DM nickname user ID cannot be empty")
+		}
+	}
+
+	endpoint := EndpointUserChannels("@me")
+	body, err := s.RequestWithBucketID(http.MethodPost, endpoint, data, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+
+	err = unmarshal(body, &st)
+	return
+}
+
 // UserGuildMember returns a guild member object for the current user in the given Guild.
 // guildID : ID of the guild
 func (s *Session) UserGuildMember(guildID string, options ...RequestOption) (st *Member, err error) {
@@ -2292,6 +2325,22 @@ func (s *Session) NitroStickerPacks(options ...RequestOption) (packs []*StickerP
 	return
 }
 
+// StickerPack returns the standard sticker pack with the given ID.
+func (s *Session) StickerPack(packID string, options ...RequestOption) (pack *StickerPack, err error) {
+	if strings.TrimSpace(packID) == "" {
+		return nil, fmt.Errorf("sticker pack ID cannot be empty")
+	}
+
+	endpoint := EndpointStickerPack(packID)
+	body, err := s.RequestWithBucketID(http.MethodGet, endpoint, nil, EndpointStickerPack(""), options...)
+	if err != nil {
+		return nil, err
+	}
+
+	err = unmarshal(body, &pack)
+	return
+}
+
 // GuildStickers returns all stickers for a guild.
 // guildID : The ID of a Guild.
 func (s *Session) GuildStickers(guildID string, options ...RequestOption) (stickers []*Sticker, err error) {
@@ -3038,6 +3087,53 @@ func (s *Session) ChannelInviteCreate(channelID string, i Invite, options ...Req
 	return
 }
 
+// GroupDMAddRecipient adds a user to a group DM. The access token must belong
+// to the recipient and have the gdm.join OAuth2 scope.
+func (s *Session) GroupDMAddRecipient(channelID, userID string, data *GroupDMAddRecipientParams, options ...RequestOption) (err error) {
+	if strings.TrimSpace(channelID) == "" {
+		return fmt.Errorf("group DM channel ID cannot be empty")
+	}
+	if strings.TrimSpace(userID) == "" {
+		return fmt.Errorf("group DM recipient user ID cannot be empty")
+	}
+	if data == nil {
+		return fmt.Errorf("group DM recipient parameters cannot be nil")
+	}
+	if strings.TrimSpace(data.AccessToken) == "" {
+		return fmt.Errorf("group DM recipient access token cannot be empty")
+	}
+
+	endpoint := EndpointChannelRecipient(channelID, userID)
+	_, err = s.RequestWithBucketID(
+		http.MethodPut,
+		endpoint,
+		data,
+		EndpointChannelRecipient(channelID, ""),
+		options...,
+	)
+	return
+}
+
+// GroupDMRemoveRecipient removes a user from a group DM.
+func (s *Session) GroupDMRemoveRecipient(channelID, userID string, options ...RequestOption) (err error) {
+	if strings.TrimSpace(channelID) == "" {
+		return fmt.Errorf("group DM channel ID cannot be empty")
+	}
+	if strings.TrimSpace(userID) == "" {
+		return fmt.Errorf("group DM recipient user ID cannot be empty")
+	}
+
+	endpoint := EndpointChannelRecipient(channelID, userID)
+	_, err = s.RequestWithBucketID(
+		http.MethodDelete,
+		endpoint,
+		nil,
+		EndpointChannelRecipient(channelID, ""),
+		options...,
+	)
+	return
+}
+
 // ChannelPermissionSet creates a Permission Override for the given channel.
 // NOTE: This func name may changed.  Using Set instead of Create because
 // you can both create a new override or update an override with this function.
@@ -3170,6 +3266,73 @@ func (s *Session) InviteDelete(inviteID string, options ...RequestOption) (st *I
 	}
 
 	err = unmarshal(body, &st)
+	return
+}
+
+// InviteTargetUsers returns the target-users CSV file for an invite.
+func (s *Session) InviteTargetUsers(inviteID string, options ...RequestOption) ([]byte, error) {
+	if strings.TrimSpace(inviteID) == "" {
+		return nil, fmt.Errorf("invite code cannot be empty")
+	}
+
+	endpoint := EndpointInviteTargetUsers(inviteID)
+	return s.RequestWithBucketID(http.MethodGet, endpoint, nil, EndpointInviteTargetUsers(""), options...)
+}
+
+// InviteTargetUsersUpdate uploads a target-users CSV file for an invite.
+func (s *Session) InviteTargetUsersUpdate(inviteID string, file *File, options ...RequestOption) error {
+	if strings.TrimSpace(inviteID) == "" {
+		return fmt.Errorf("invite code cannot be empty")
+	}
+	if file == nil {
+		return fmt.Errorf("target users file cannot be nil")
+	}
+	if strings.TrimSpace(file.Name) == "" {
+		return fmt.Errorf("target users file name cannot be empty")
+	}
+
+	upload := *file
+	if upload.ContentType == "" {
+		upload.ContentType = "text/csv"
+	}
+	multipartBody, err := NewMultipartBodyWithFieldsAndFile(nil, "target_users_file", &upload)
+	if err != nil {
+		return err
+	}
+
+	endpoint := EndpointInviteTargetUsers(inviteID)
+	_, err = s.RequestRawWithBody(
+		http.MethodPut,
+		endpoint,
+		multipartBody.ContentType(),
+		multipartBody.Open,
+		EndpointInviteTargetUsers(""),
+		0,
+		options...,
+	)
+	return err
+}
+
+// InviteTargetUsersJobStatus returns the asynchronous target-users processing
+// status for an invite.
+func (s *Session) InviteTargetUsersJobStatus(inviteID string, options ...RequestOption) (job *InviteTargetUsersJob, err error) {
+	if strings.TrimSpace(inviteID) == "" {
+		return nil, fmt.Errorf("invite code cannot be empty")
+	}
+
+	endpoint := EndpointInviteTargetUsersJobStatus(inviteID)
+	body, err := s.RequestWithBucketID(
+		http.MethodGet,
+		endpoint,
+		nil,
+		EndpointInviteTargetUsersJobStatus(""),
+		options...,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	err = unmarshal(body, &job)
 	return
 }
 

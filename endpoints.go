@@ -156,6 +156,7 @@ var (
 	EndpointChannelMessagePinDeprecated         = func(cID, mID string) string { return EndpointChannelMessagesPinsDeprecated(cID) + "/" + mID }
 	EndpointChannelMessageCrosspost             = func(cID, mID string) string { return EndpointChannel(cID) + "/messages/" + mID + "/crosspost" }
 	EndpointChannelFollow                       = func(cID string) string { return EndpointChannel(cID) + "/followers" }
+	EndpointChannelRecipient                    = func(cID, uID string) string { return EndpointChannel(cID) + "/recipients/" + uID }
 	EndpointThreadMembers                       = func(tID string) string { return EndpointChannel(tID) + "/thread-members" }
 	EndpointThreadMember                        = func(tID, mID string) string { return EndpointThreadMembers(tID) + "/" + mID }
 
@@ -165,7 +166,9 @@ var (
 	EndpointStickerImage       = func(sID string) string { return EndpointCDN + "stickers/" + sID + ".png" }
 	EndpointStickerAnimated    = func(sID string) string { return EndpointCDN + "stickers/" + sID + ".gif" }
 	EndpointStickerLottie      = func(sID string) string { return EndpointCDN + "stickers/" + sID + ".json" }
-	EndpointNitroStickersPacks = EndpointAPI + "/sticker-packs"
+	EndpointStickerPacks       = EndpointAPI + "sticker-packs"
+	EndpointStickerPack        = func(pID string) string { return EndpointStickerPacks + "/" + pID }
+	EndpointNitroStickersPacks = EndpointStickerPacks
 
 	EndpointChannelWebhooks = func(cID string) string { return EndpointChannel(cID) + "/webhooks" }
 	EndpointWebhook         = func(wID string) string { return EndpointWebhooks + wID }
@@ -252,7 +255,9 @@ var (
 
 	EndpointGuildCreate = EndpointAPI + "guilds"
 
-	EndpointInvite = func(iID string) string { return EndpointAPI + "invites/" + iID }
+	EndpointInvite                     = func(iID string) string { return EndpointAPI + "invites/" + iID }
+	EndpointInviteTargetUsers          = func(iID string) string { return EndpointInvite(iID) + "/target-users" }
+	EndpointInviteTargetUsersJobStatus = func(iID string) string { return EndpointInviteTargetUsers(iID) + "/job-status" }
 
 	EndpointEmoji         = func(eID string) string { return EndpointCDN + "emojis/" + eID + ".png" }
 	EndpointEmojiAnimated = func(eID string) string { return EndpointCDN + "emojis/" + eID + ".gif" }

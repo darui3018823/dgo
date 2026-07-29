@@ -377,6 +377,43 @@ type Invite struct {
 	ExpiresAt *time.Time `json:"expires_at"`
 }
 
+// InviteTargetUsersJobStatus is the processing status of an invite
+// target-users CSV file.
+type InviteTargetUsersJobStatus int
+
+// Invite target-users job statuses.
+const (
+	InviteTargetUsersJobStatusUnspecified InviteTargetUsersJobStatus = iota
+	InviteTargetUsersJobStatusProcessing
+	InviteTargetUsersJobStatusCompleted
+	InviteTargetUsersJobStatusFailed
+)
+
+// InviteTargetUsersJob describes the asynchronous processing of an invite
+// target-users CSV file.
+type InviteTargetUsersJob struct {
+	Status         InviteTargetUsersJobStatus `json:"status"`
+	TotalUsers     int                        `json:"total_users"`
+	ProcessedUsers int                        `json:"processed_users"`
+	CreatedAt      time.Time                  `json:"created_at"`
+	CompletedAt    *time.Time                 `json:"completed_at"`
+	ErrorMessage   *string                    `json:"error_message"`
+}
+
+// GroupDMCreateParams contains the OAuth2 access tokens and nicknames used to
+// create a group DM. Each access token must have the gdm.join scope.
+type GroupDMCreateParams struct {
+	AccessTokens []string          `json:"access_tokens"`
+	Nicks        map[string]string `json:"nicks"`
+}
+
+// GroupDMAddRecipientParams contains the data required to add a recipient to a
+// group DM. AccessToken must have the gdm.join scope for the recipient.
+type GroupDMAddRecipientParams struct {
+	AccessToken string `json:"access_token"`
+	Nick        string `json:"nick"`
+}
+
 // ChannelType is the type of a Channel
 type ChannelType int
 

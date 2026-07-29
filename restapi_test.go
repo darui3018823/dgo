@@ -946,6 +946,75 @@ func TestMessageReactionsComplexRejectsInvalidParams(t *testing.T) {
 	}
 }
 
+func TestGuildAuditLogComplexSupportsAfterPagination(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		query := request.URL.Query()
+		if query.Get("user_id") != "user" ||
+			query.Get("action_type") != "192" ||
+			query.Get("after") != "0" ||
+			query.Get("limit") != "100" ||
+			query.Has("before") {
+			t.Fatalf("unexpected audit log query: %s", request.URL.RawQuery)
+		}
+		return jsonResponse(http.StatusOK, `{
+			"application_commands":[{"id":"command","name":"ping"}],
+			"audit_log_entries":[{"id":"entry","action_type":192,"options":{"status":"coding"}}],
+			"auto_moderation_rules":[{"id":"rule"}],
+			"guild_scheduled_events":[{"id":"event"}],
+			"integrations":[],
+			"threads":[{"id":"thread","type":11}],
+			"users":[{"id":"user"}],
+			"webhooks":[]
+		}`), nil
+	})
+
+	log, err := session.GuildAuditLogComplex("guild", &GuildAuditLogParams{
+		UserID:     "user",
+		ActionType: AuditLogActionVoiceChannelStatusCreate,
+		AfterID:    "0",
+		Limit:      100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(log.AuditLogEntries) != 1 ||
+		log.AuditLogEntries[0].Options == nil ||
+		log.AuditLogEntries[0].Options.Status != "coding" ||
+		len(log.ApplicationCommands) != 1 ||
+		len(log.AutoModerationRules) != 1 ||
+		len(log.GuildScheduledEvents) != 1 ||
+		len(log.Threads) != 1 {
+		t.Fatalf("unexpected audit log response: %#v", log)
+	}
+}
+
+func TestGuildAuditLogComplexRejectsInvalidPagination(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		t.Fatal("invalid audit log parameters must not make a request")
+		return nil, nil
+	})
+
+	if _, err := session.GuildAuditLogComplex("guild", &GuildAuditLogParams{
+		BeforeID: "before",
+		AfterID:  "after",
+	}); err == nil {
+		t.Fatal("expected mutually exclusive pagination error")
+	}
+	if _, err := session.GuildAuditLogComplex("guild", &GuildAuditLogParams{
+		Limit: 101,
+	}); err == nil {
+		t.Fatal("expected limit validation error")
+	}
+}
+
 func TestWithContext(t *testing.T) {
 	// Set up a test context.
 	type key struct{}

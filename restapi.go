@@ -1604,21 +1604,46 @@ func (s *Session) GuildEmbedEdit(guildID string, data *GuildEmbed, options ...Re
 // actionType  : If provided the log will be filtered for the given Action Type.
 // limit       : The number messages that can be returned. (default 50, min 1, max 100)
 func (s *Session) GuildAuditLog(guildID, userID, beforeID string, actionType, limit int, options ...RequestOption) (st *GuildAuditLog, err error) {
+	return s.GuildAuditLogComplex(guildID, &GuildAuditLogParams{
+		UserID:     userID,
+		ActionType: AuditLogAction(actionType),
+		BeforeID:   beforeID,
+		Limit:      limit,
+	}, options...)
+}
+
+// GuildAuditLogComplex returns filtered and paginated audit log entries for a guild.
+func (s *Session) GuildAuditLogComplex(guildID string, params *GuildAuditLogParams, options ...RequestOption) (st *GuildAuditLog, err error) {
+	if params == nil {
+		params = &GuildAuditLogParams{}
+	}
+	if params.BeforeID != "" && params.AfterID != "" {
+		return nil, fmt.Errorf("audit log before and after parameters are mutually exclusive")
+	}
+	if params.Limit < 0 || params.Limit > 100 {
+		return nil, fmt.Errorf("audit log limit must be 0 or between 1 and 100")
+	}
+	if params.ActionType < 0 {
+		return nil, fmt.Errorf("audit log action type cannot be negative")
+	}
 
 	uri := EndpointGuildAuditLogs(guildID)
 
 	v := url.Values{}
-	if userID != "" {
-		v.Set("user_id", userID)
+	if params.UserID != "" {
+		v.Set("user_id", params.UserID)
 	}
-	if beforeID != "" {
-		v.Set("before", beforeID)
+	if params.BeforeID != "" {
+		v.Set("before", params.BeforeID)
 	}
-	if actionType > 0 {
-		v.Set("action_type", strconv.Itoa(actionType))
+	if params.AfterID != "" {
+		v.Set("after", params.AfterID)
 	}
-	if limit > 0 {
-		v.Set("limit", strconv.Itoa(limit))
+	if params.ActionType > 0 {
+		v.Set("action_type", strconv.Itoa(int(params.ActionType)))
+	}
+	if params.Limit > 0 {
+		v.Set("limit", strconv.Itoa(params.Limit))
 	}
 	if len(v) > 0 {
 		uri = fmt.Sprintf("%s?%s", uri, v.Encode())

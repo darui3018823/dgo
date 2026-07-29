@@ -1948,10 +1948,23 @@ type GuildEmbed struct {
 // A GuildAuditLog stores data for a guild audit log.
 // https://discord.com/developers/docs/resources/audit-log#audit-log-object-audit-log-structure
 type GuildAuditLog struct {
-	Webhooks        []*Webhook       `json:"webhooks,omitempty"`
-	Users           []*User          `json:"users,omitempty"`
-	AuditLogEntries []*AuditLogEntry `json:"audit_log_entries"`
-	Integrations    []*Integration   `json:"integrations"`
+	ApplicationCommands  []*ApplicationCommand  `json:"application_commands"`
+	AuditLogEntries      []*AuditLogEntry       `json:"audit_log_entries"`
+	AutoModerationRules  []*AutoModerationRule  `json:"auto_moderation_rules"`
+	GuildScheduledEvents []*GuildScheduledEvent `json:"guild_scheduled_events"`
+	Integrations         []*Integration         `json:"integrations"`
+	Threads              []*Channel             `json:"threads"`
+	Users                []*User                `json:"users"`
+	Webhooks             []*Webhook             `json:"webhooks"`
+}
+
+// GuildAuditLogParams controls filtering and pagination for GuildAuditLogComplex.
+type GuildAuditLogParams struct {
+	UserID     string
+	ActionType AuditLogAction
+	BeforeID   string
+	AfterID    string
+	Limit      int
 }
 
 // AuditLogEntry for a GuildAuditLog
@@ -2138,6 +2151,7 @@ type AuditLogOptions struct {
 	AutoModerationRuleName        string               `json:"auto_moderation_rule_name"`
 	AutoModerationRuleTriggerType string               `json:"auto_moderation_rule_trigger_type"`
 	IntegrationType               string               `json:"integration_type"`
+	Status                        string               `json:"status"`
 }
 
 // AuditLogOptionsType of the AuditLogOption
@@ -2217,12 +2231,17 @@ const (
 
 	AuditLogActionApplicationCommandPermissionUpdate AuditLogAction = 121
 
+	AuditLogActionSoundboardSoundCreate AuditLogAction = 130
+	AuditLogActionSoundboardSoundUpdate AuditLogAction = 131
+	AuditLogActionSoundboardSoundDelete AuditLogAction = 132
+
 	AuditLogActionAutoModerationRuleCreate                AuditLogAction = 140
 	AuditLogActionAutoModerationRuleUpdate                AuditLogAction = 141
 	AuditLogActionAutoModerationRuleDelete                AuditLogAction = 142
 	AuditLogActionAutoModerationBlockMessage              AuditLogAction = 143
 	AuditLogActionAutoModerationFlagToChannel             AuditLogAction = 144
 	AuditLogActionAutoModerationUserCommunicationDisabled AuditLogAction = 145
+	AuditLogActionAutoModerationQuarantineUser            AuditLogAction = 146
 
 	AuditLogActionCreatorMonetizationRequestCreated AuditLogAction = 150
 	AuditLogActionCreatorMonetizationTermsAccepted  AuditLogAction = 151
@@ -2233,8 +2252,15 @@ const (
 	AuditLogActionOnboardingCreate       AuditLogAction = 166
 	AuditLogActionOnboardingUpdate       AuditLogAction = 167
 
-	AuditLogActionHomeSettingsCreate = 190
-	AuditLogActionHomeSettingsUpdate = 191
+	AuditLogActionHomeSettingsCreate AuditLogAction = 190
+	AuditLogActionHomeSettingsUpdate AuditLogAction = 191
+
+	AuditLogActionVoiceChannelStatusCreate AuditLogAction = 192
+	AuditLogActionVoiceChannelStatusDelete AuditLogAction = 193
+
+	// AuditLogActionVoiceChannelStatusUpdate is an alias retained for the
+	// terminology used when voice channel status audit logs were announced.
+	AuditLogActionVoiceChannelStatusUpdate = AuditLogActionVoiceChannelStatusCreate
 )
 
 // GuildMemberParams stores data needed to update a member

@@ -127,6 +127,25 @@ func TestCurrentPermissionConstantsAndAggregates(t *testing.T) {
 	}
 }
 
+func TestCurrentAuditLogActions(t *testing.T) {
+	tests := map[AuditLogAction]int{
+		AuditLogActionSoundboardSoundCreate:        130,
+		AuditLogActionSoundboardSoundUpdate:        131,
+		AuditLogActionSoundboardSoundDelete:        132,
+		AuditLogActionAutoModerationQuarantineUser: 146,
+		AuditLogActionVoiceChannelStatusCreate:     192,
+		AuditLogActionVoiceChannelStatusDelete:     193,
+	}
+	for action, want := range tests {
+		if int(action) != want {
+			t.Errorf("audit log action = %d, want %d", action, want)
+		}
+	}
+	if AuditLogActionVoiceChannelStatusUpdate != AuditLogActionVoiceChannelStatusCreate {
+		t.Fatal("voice status update alias does not match create action")
+	}
+}
+
 func TestSticker_URL(t *testing.T) {
 	t.Run("png", func(t *testing.T) {
 		s := &Sticker{ID: "123", FormatType: StickerFormatTypePNG}

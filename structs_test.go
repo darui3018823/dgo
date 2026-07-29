@@ -8,8 +8,33 @@
 package dgo
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 )
+
+func TestIdentifyPropertiesUseCurrentFieldNames(t *testing.T) {
+	data, err := json.Marshal(IdentifyProperties{
+		OS:              "linux",
+		Browser:         "dgo",
+		Device:          "dgo",
+		Referer:         "legacy",
+		ReferringDomain: "legacy",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := string(data)
+	for _, field := range []string{`"os"`, `"browser"`, `"device"`} {
+		if !strings.Contains(got, field) {
+			t.Errorf("identify properties %s missing %s", got, field)
+		}
+	}
+	if strings.Contains(got, `"$`) || strings.Contains(got, "legacy") {
+		t.Errorf("identify properties contain deprecated fields: %s", got)
+	}
+}
 
 func TestSticker_URL(t *testing.T) {
 	t.Run("png", func(t *testing.T) {

@@ -135,6 +135,64 @@ func TestRequestGuildMembersUsesSingleGuildPayload(t *testing.T) {
 	}
 }
 
+func TestReadySelectsResumeGatewayURL(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.gateway = "wss://gateway.discord.gg/?compress=zlib-stream"
+
+	var ready Ready
+	if err = json.Unmarshal([]byte(`{
+		"v":10,
+		"session_id":"session",
+		"resume_gateway_url":"wss://gateway-us-east1-b.discord.gg/?region=us-east"
+	}`), &ready); err != nil {
+		t.Fatal(err)
+	}
+	session.onReady(&ready)
+
+	connectURL, usingResume, err := session.gatewayConnectURL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !usingResume {
+		t.Fatal("gatewayConnectURL did not select READY resume_gateway_url")
+	}
+	wantResume := "wss://gateway-us-east1-b.discord.gg/?encoding=json&region=us-east&v=" + APIVersion
+	if connectURL != wantResume {
+		t.Fatalf("resume gateway URL = %q, want %q", connectURL, wantResume)
+	}
+
+	session.gatewaySessionMu.Lock()
+	session.resumeGatewayURL = ""
+	session.gatewaySessionMu.Unlock()
+	connectURL, usingResume, err = session.gatewayConnectURL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usingResume {
+		t.Fatal("gatewayConnectURL selected an empty resume URL")
+	}
+	wantInitial := "wss://gateway.discord.gg/?compress=zlib-stream&encoding=json&v=" + APIVersion
+	if connectURL != wantInitial {
+		t.Fatalf("initial gateway URL = %q, want %q", connectURL, wantInitial)
+	}
+}
+
+func TestGatewayConnectURLRejectsInvalidURL(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, gateway := range []string{"", "https://gateway.discord.gg", "wss:///missing-host"} {
+		session.gateway = gateway
+		if _, _, err = session.gatewayConnectURL(); err == nil {
+			t.Fatalf("accepted invalid gateway URL %q", gateway)
+		}
+	}
+}
+
 func TestRequestGuildMembersValidation(t *testing.T) {
 	session, err := New("Bot token")
 	if err != nil {

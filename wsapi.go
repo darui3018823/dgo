@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -93,27 +94,35 @@ func (s *Session) OpenWithContext(ctx context.Context) error {
 		return ErrWSAlreadyOpen
 	}
 
-	// Get the gateway to use for the Websocket connection
+	// Get the initial gateway. Discord's READY event can provide a more
+	// specific endpoint for subsequent resume attempts.
 	if s.gateway == "" {
 		s.gateway, err = s.Gateway()
 		if err != nil {
 			return err
 		}
-
-		// Add the version and encoding to the URL
-		s.gateway = s.gateway + "?v=" + APIVersion + "&encoding=json"
+	}
+	connectGateway, usingResumeGateway, err := s.gatewayConnectURL()
+	if err != nil {
+		return err
 	}
 
 	// Connect to the Gateway
-	s.log(LogInformational, "connecting to gateway %s", s.gateway)
+	s.log(LogInformational, "connecting to gateway %s", connectGateway)
 	header := http.Header{}
 	header.Add("accept-encoding", "zlib")
 
 	// Use DialContext if available, otherwise fallback (though gorilla/websocket has it since forever)
-	s.wsConn, _, err = s.Dialer.DialContext(ctx, s.gateway, header)
+	s.wsConn, _, err = s.Dialer.DialContext(ctx, connectGateway, header)
 	if err != nil {
-		s.log(LogError, "error connecting to gateway %s, %s", s.gateway, err)
-		s.gateway = "" // clear cached gateway
+		s.log(LogError, "error connecting to gateway %s, %s", connectGateway, err)
+		if usingResumeGateway {
+			s.gatewaySessionMu.Lock()
+			s.resumeGatewayURL = ""
+			s.gatewaySessionMu.Unlock()
+		} else {
+			s.gateway = "" // clear cached initial gateway
+		}
 		s.wsConn = nil // Just to be safe.
 		return err
 	}
@@ -157,12 +166,15 @@ func (s *Session) OpenWithContext(ctx context.Context) error {
 	// Now we send either an Op 2 Identity if this is a brand new
 	// connection or Op 6 Resume if we are resuming an existing connection.
 	sequence := atomic.LoadInt64(s.sequence)
-	if s.sessionID == "" && sequence == 0 {
+	s.gatewaySessionMu.RLock()
+	sessionID := s.sessionID
+	s.gatewaySessionMu.RUnlock()
+	if sessionID == "" {
 
 		// Send Op 2 Identity Packet
 		err = s.identify()
 		if err != nil {
-			err = fmt.Errorf("error sending identify packet to gateway, %s, %s", s.gateway, err)
+			err = fmt.Errorf("error sending identify packet to gateway, %s, %s", connectGateway, err)
 			return err
 		}
 
@@ -171,8 +183,8 @@ func (s *Session) OpenWithContext(ctx context.Context) error {
 		// Send Op 6 Resume Packet
 		p := resumePacket{}
 		p.Op = 6
-		p.Data.Token = s.Token
-		p.Data.SessionID = s.sessionID
+		p.Data.Token = token
+		p.Data.SessionID = sessionID
 		p.Data.Sequence = sequence
 
 		s.log(LogInformational, "sending resume packet to gateway")
@@ -180,7 +192,7 @@ func (s *Session) OpenWithContext(ctx context.Context) error {
 		err = s.wsConn.WriteJSON(p)
 		s.wsMutex.Unlock()
 		if err != nil {
-			err = fmt.Errorf("error sending gateway resume packet, %s, %s", s.gateway, err)
+			err = fmt.Errorf("error sending gateway resume packet, %s, %s", connectGateway, err)
 			return err
 		}
 
@@ -236,6 +248,32 @@ func (s *Session) OpenWithContext(ctx context.Context) error {
 
 	s.log(LogInformational, "exiting")
 	return nil
+}
+
+func (s *Session) gatewayConnectURL() (connectURL string, usingResume bool, err error) {
+	baseURL := s.gateway
+	s.gatewaySessionMu.RLock()
+	if s.sessionID != "" && s.resumeGatewayURL != "" {
+		baseURL = s.resumeGatewayURL
+		usingResume = true
+	}
+	s.gatewaySessionMu.RUnlock()
+
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return "", false, fmt.Errorf("invalid gateway URL: %w", err)
+	}
+	if parsed.Scheme != "ws" && parsed.Scheme != "wss" {
+		return "", false, fmt.Errorf("invalid gateway URL scheme %q", parsed.Scheme)
+	}
+	if parsed.Host == "" {
+		return "", false, errors.New("gateway URL must include a host")
+	}
+	query := parsed.Query()
+	query.Set("v", APIVersion)
+	query.Set("encoding", "json")
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), usingResume, nil
 }
 
 // listen polls the websocket connection for events, it will stop when the

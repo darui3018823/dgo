@@ -153,8 +153,11 @@ type Session struct {
 	// stores sessions current Discord Gateway
 	gateway string
 
-	// stores session ID of current Gateway connection
-	sessionID string
+	// Stores resumable Gateway session data independently of the connection
+	// lock. READY can be processed while Open holds the Session lock.
+	gatewaySessionMu sync.RWMutex
+	sessionID        string
+	resumeGatewayURL string
 
 	// used to make sure gateway websocket writes do not happen concurrently
 	wsMutex sync.Mutex

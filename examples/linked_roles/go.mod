@@ -1,16 +1,17 @@
-module github.com/darui3018823/discordgo/examples/linked_roles
+module github.com/darui3018823/dgo/examples/linked_roles
 
 go 1.24.0
 
 replace github.com/darui3018823/dgo => ../../
 
 require (
-	github.com/darui3018823/dgo v0.29.0-patched-2
+	github.com/darui3018823/dgo v0.30.0
 	github.com/joho/godotenv v1.4.0
 	golang.org/x/oauth2 v0.3.0
 )
 
 require (
+	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	golang.org/x/crypto v0.46.0 // indirect

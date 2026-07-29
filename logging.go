@@ -198,11 +198,14 @@ func (s *Session) log(msgL int, format string, a ...interface{}) {
 	}
 }
 
-// helper function that wraps msglog for the VoiceConnection struct
-// This adds a check to insure the message is only logged
-// if the voice connection log level is equal or higher than the
-// message log level
+// log routes owned voice connections through their Session logger. The
+// package-global logger and LogLevel remain a compatibility fallback for
+// standalone VoiceConnection values.
 func (v *VoiceConnection) log(msgL int, format string, a ...interface{}) {
+	if v.session != nil {
+		v.session.log(msgL, format, a...)
+		return
+	}
 
 	if msgL > v.LogLevel {
 		return

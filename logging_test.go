@@ -115,6 +115,29 @@ func TestVoiceDebugLogRedactsSecretKey(t *testing.T) {
 	}
 }
 
+func TestOwnedVoiceConnectionUsesSessionLogger(t *testing.T) {
+	previousLogger := Logger
+	defer func() { Logger = previousLogger }()
+	Logger = func(_ int, _ int, _ string, _ ...interface{}) {
+		t.Fatal("owned voice connection used package-global logger")
+	}
+
+	session := &Session{}
+	var logs bytes.Buffer
+	session.SetLogger(slog.New(slog.NewTextHandler(
+		&logs,
+		&slog.HandlerOptions{Level: slog.LevelDebug},
+	)))
+	voice := &VoiceConnection{
+		session:  session,
+		LogLevel: -1,
+	}
+	voice.log(LogDebug, "owned voice log")
+	if got := logs.String(); !strings.Contains(got, "owned voice log") {
+		t.Fatalf("session voice log = %q", got)
+	}
+}
+
 func TestDefaultProtocolLogsOmitPrivatePayloads(t *testing.T) {
 	t.Run("handler panic", func(t *testing.T) {
 		session := &Session{SyncEvents: true}

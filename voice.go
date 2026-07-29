@@ -33,7 +33,10 @@ import (
 type VoiceConnection struct {
 	sync.RWMutex
 
-	Debug        bool // If true, print extra logging -- DEPRECATED
+	Debug bool // If true, print extra logging -- DEPRECATED
+	// LogLevel filters the legacy package logger used only by standalone voice
+	// connections without an owning Session.
+	// Deprecated: configure the Session logger's slog.Handler level instead.
 	LogLevel     int
 	Ready        bool // If true, voice is ready to send/receive audio
 	UserID       string

@@ -1,6 +1,6 @@
 # dgo (discordgo Hard Fork)
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/darui3018823/dgo.svg)](https://pkg.go.dev/github.com/darui3018823/dgo) [![CI](https://github.com/darui3018823/dgo/actions/workflows/lint.yml/badge.svg)](https://github.com/darui3018823/dgo/actions/workflows/lint.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/darui3018823/dgo.svg)](https://pkg.go.dev/github.com/darui3018823/dgo) [![CI](https://github.com/darui3018823/dgo/actions/workflows/ci.yml/badge.svg)](https://github.com/darui3018823/dgo/actions/workflows/ci.yml)
 
 ## ⚠️ Hard Fork Notice
 
@@ -17,7 +17,7 @@ This fork addresses Discord's voice encryption protocol changes (XChaCha20-Poly1
 - **Context Support**: `OpenWithContext` and cancellable rate limit waiting.
 - **Structured Logging**: Uses `log/slog` for modern, structured logging.
 - **Improved Rate Limiter**: Supports `X-RateLimit-Bucket` headers and context cancellation.
-- **Modern Go**: Requires Go 1.21+, uses `io.ReadAll` instead of deprecated `ioutil`.
+- **Modern Go**: Requires Go 1.24+, uses `io.ReadAll` instead of deprecated `ioutil`.
 - **Voice Encryption**: Includes critical patches for `aead_xchacha20_poly1305_rtpsize`.
 
 ---

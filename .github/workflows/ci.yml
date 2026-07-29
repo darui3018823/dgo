@@ -1,59 +1,105 @@
+name: CI
+
 on:
   push:
+    branches: [master]
   pull_request:
+    branches: [master]
+  workflow_call:
 
-name: CI
+permissions:
+  contents: read
+
+env:
+  GOTOOLCHAIN: local
 
 jobs:
   format:
+    name: Format and workflow lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Install Go
-        uses: actions/setup-go@v3
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
-          go-version: 1.24
-      - name: Code
-        uses: actions/checkout@v3
-      - name: Check diff between gofmt and code
-        run: diff <(gofmt -d .) <(echo -n)
-  
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            examples/linked_roles/go.sum
+            examples/voice_receive/go.sum
+      - name: Check gofmt
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "${unformatted}" ]; then
+            echo "${unformatted}"
+            exit 1
+          fi
+      - name: Check workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
   test:
-    runs-on: ubuntu-latest
+    name: Test ${{ matrix.module.name }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
+      fail-fast: false
       matrix:
-        go-version: [1.23, 1.24, 1.25]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        module:
+          - name: root
+            path: .
+            mod: go.mod
+            sum: go.sum
+          - name: linked_roles
+            path: examples/linked_roles
+            mod: examples/linked_roles/go.mod
+            sum: examples/linked_roles/go.sum
+          - name: voice_receive
+            path: examples/voice_receive
+            mod: examples/voice_receive/go.mod
+            sum: examples/voice_receive/go.sum
     steps:
-      - name: Install Go
-        uses: actions/setup-go@v3
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
-          go-version: ${{ matrix.go-version }}
-      - name: Code
-        uses: actions/checkout@v3
-      - run: go test -v -race ./...
-  
-  lint:
+          go-version-file: ${{ matrix.module.mod }}
+          cache-dependency-path: ${{ matrix.module.sum }}
+      - name: Test with race detector
+        working-directory: ${{ matrix.module.path }}
+        run: go test -race ./...
+      - name: Vet
+        working-directory: ${{ matrix.module.path }}
+        run: go vet ./...
+
+  staticcheck:
+    name: Staticcheck ${{ matrix.module.name }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - name: root
+            path: .
+            mod: go.mod
+            sum: go.sum
+          - name: linked_roles
+            path: examples/linked_roles
+            mod: examples/linked_roles/go.mod
+            sum: examples/linked_roles/go.sum
+          - name: voice_receive
+            path: examples/voice_receive
+            mod: examples/voice_receive/go.mod
+            sum: examples/voice_receive/go.sum
     steps:
-      - name: Install Go
-        uses: actions/setup-go@v3
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
-          go-version: 1.24
-      - name: Code
-        uses: actions/checkout@v3
-      - name: Go vet
-        run: go vet -x ./...
-
-      - name: GolangCI-Lint
-        uses: golangci/golangci-lint-action@v6
-        if: github.event_name == 'pull_request'
-        with:
-          version: latest
-          only-new-issues: true
-          skip-cache: true
-      
-      - name: GolangCI-Lint
-        uses: golangci/golangci-lint-action@v6
-        if: github.event_name != 'pull_request'
-        with:
-          version: latest
-
+          go-version-file: ${{ matrix.module.mod }}
+          cache-dependency-path: ${{ matrix.module.sum }}
+      - name: Install staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@2026.1
+      - name: Run staticcheck
+        working-directory: ${{ matrix.module.path }}
+        run: staticcheck ./...

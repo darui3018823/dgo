@@ -1,35 +1,44 @@
-name: "CodeQL for Go"
+name: CodeQL
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [master]
   pull_request:
-    branches: [ "main" ]
+    branches: [master]
   schedule:
-    - cron: '0 15 * * *'
+    - cron: "0 15 * * *"
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  GOTOOLCHAIN: local
 
 jobs:
   analyze:
-    name: Analyze (Go)
+    name: Analyze Go modules
     runs-on: ubuntu-latest
-
-    permissions:
-      security-events: write
-      packages: read
-      actions: read
-      contents: read
-
+    timeout-minutes: 30
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v6
-
-    - name: Initialize CodeQL
-      uses: github/codeql-action/init@v4
-      with:
-        languages: go
-        build-mode: autobuild
-
-    - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v4
-      with:
-        category: "/language:go"
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            examples/linked_roles/go.sum
+            examples/voice_receive/go.sum
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: go
+          build-mode: manual
+      - name: Build all Go modules
+        shell: bash
+        run: |
+          go build ./...
+          (cd examples/linked_roles && go build ./...)
+          (cd examples/voice_receive && go build ./...)
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:go

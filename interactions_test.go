@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
+	"io"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -31,6 +32,13 @@ func TestVerifyInteraction(t *testing.T) {
 
 		if !VerifyInteraction(request, pubkey) {
 			t.Error("expected true, got false")
+		}
+		restored, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(restored) != body {
+			t.Fatalf("restored body = %q, want %q", restored, body)
 		}
 	})
 
@@ -63,6 +71,29 @@ func TestVerifyInteraction(t *testing.T) {
 
 		if VerifyInteraction(request, pubkey) {
 			t.Error("expected false, got true")
+		}
+	})
+
+	t.Run("failure/body over limit", func(t *testing.T) {
+		body := strings.Repeat("x", int(MaxInteractionBodySize)+1)
+		request := httptest.NewRequest("POST", "http://localhost/interaction", strings.NewReader(body))
+		request.Header.Set("X-Signature-Timestamp", timestamp)
+		request.Header.Set("X-Signature-Ed25519", strings.Repeat("00", ed25519.SignatureSize))
+
+		if VerifyInteraction(request, pubkey) {
+			t.Error("oversized interaction body was accepted")
+		}
+	})
+
+	t.Run("failure/chunked body over limit", func(t *testing.T) {
+		body := strings.Repeat("x", int(MaxInteractionBodySize)+1)
+		request := httptest.NewRequest("POST", "http://localhost/interaction", strings.NewReader(body))
+		request.ContentLength = -1
+		request.Header.Set("X-Signature-Timestamp", timestamp)
+		request.Header.Set("X-Signature-Ed25519", strings.Repeat("00", ed25519.SignatureSize))
+
+		if VerifyInteraction(request, pubkey) {
+			t.Error("oversized chunked interaction body was accepted")
 		}
 	})
 }

@@ -16,6 +16,9 @@ import (
 // InteractionDeadline is the time allowed to respond to an interaction.
 const InteractionDeadline = time.Second * 3
 
+// MaxInteractionBodySize limits unauthenticated interaction request bodies.
+const MaxInteractionBodySize int64 = 1 << 20
+
 // ApplicationCommandType represents the type of application command.
 type ApplicationCommandType uint8
 
@@ -621,7 +624,9 @@ type InteractionResponseData struct {
 // signing algorithm, as documented here:
 // https://discord.com/developers/docs/interactions/receiving-and-responding#security-and-authorization
 func VerifyInteraction(r *http.Request, key ed25519.PublicKey) bool {
-	var msg bytes.Buffer
+	if r == nil || r.Body == nil || len(key) != ed25519.PublicKeySize {
+		return false
+	}
 
 	signature := r.Header.Get("X-Signature-Ed25519")
 	if signature == "" {
@@ -642,21 +647,19 @@ func VerifyInteraction(r *http.Request, key ed25519.PublicKey) bool {
 		return false
 	}
 
-	msg.WriteString(timestamp)
-
-	defer r.Body.Close()
-	var body bytes.Buffer
-
-	// at the end of the function, copy the original body back into the request
-	defer func() {
-		r.Body = io.NopCloser(&body)
-	}()
-
-	// copy body into buffers
-	_, err = io.Copy(&msg, io.TeeReader(r.Body, &body))
-	if err != nil {
+	if r.ContentLength > MaxInteractionBodySize {
 		return false
 	}
 
-	return ed25519.Verify(key, msg.Bytes(), sig)
+	defer r.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(r.Body, MaxInteractionBodySize+1))
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if err != nil || int64(len(body)) > MaxInteractionBodySize {
+		return false
+	}
+
+	message := make([]byte, len(timestamp)+len(body))
+	copy(message, timestamp)
+	copy(message[len(timestamp):], body)
+	return ed25519.Verify(key, message, sig)
 }

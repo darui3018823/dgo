@@ -938,7 +938,7 @@ func (v *VoiceConnection) opusSender(udpConn *net.UDPConn, close <-chan struct{}
 		}
 
 		v.RLock()
-		daveActive := v.dave != nil && v.dave.CanEncrypt()
+		dave := v.dave
 		speaking := v.speaking
 		v.RUnlock()
 
@@ -953,13 +953,13 @@ func (v *VoiceConnection) opusSender(udpConn *net.UDPConn, close <-chan struct{}
 		binary.BigEndian.PutUint16(udpHeader[2:], sequence)
 		binary.BigEndian.PutUint32(udpHeader[4:], timestamp)
 
-		if daveActive {
-			encrypted, err := v.dave.EncryptFrame(recvbuf)
+		if dave != nil && dave.IsActive() {
+			encrypted, err := dave.EncryptFrame(recvbuf)
 			if err != nil {
 				v.log(LogError, "DAVE encrypt error: %s", err)
-			} else {
-				recvbuf = encrypted
+				continue
 			}
+			recvbuf = encrypted
 		}
 
 		binary.LittleEndian.PutUint32(nonce, i)

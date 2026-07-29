@@ -6,6 +6,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -13,7 +14,7 @@ import (
 	"github.com/darui3018823/dgo/mls"
 )
 
-var opusSilencePacket = [3]byte{0xF8, 0xFF, 0xFE}
+var errUnencryptedDAVEFrame = errors.New("received an unencrypted frame while DAVE is active")
 
 type daveReceiver struct {
 	userID            string
@@ -225,6 +226,9 @@ func (d *DAVESession) EncryptFrame(opusData []byte) ([]byte, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	if !d.active {
+		return nil, fmt.Errorf("DAVE session is not active")
+	}
 	if d.frameCipher == nil {
 		return nil, fmt.Errorf("no frame cipher")
 	}
@@ -263,13 +267,13 @@ func (d *DAVESession) DecryptFrame(ssrc uint32, data []byte) ([]byte, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if len(data) == 3 && data[0] == opusSilencePacket[0] && data[1] == opusSilencePacket[1] && data[2] == opusSilencePacket[2] {
+	if !d.active {
 		return data, nil
 	}
 
 	ciphertext, truncatedTag, nonce, err := parseSecureFrame(data)
 	if err == errNotDAVEFrame {
-		return data, nil
+		return nil, errUnencryptedDAVEFrame
 	}
 	if err != nil {
 		return nil, err
@@ -364,7 +368,13 @@ func (d *DAVESession) clearReceiversLocked() {
 func (d *DAVESession) CanEncrypt() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.frameCipher != nil
+	return d.active && d.frameCipher != nil
+}
+
+func (d *DAVESession) IsActive() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.active
 }
 
 func (d *DAVESession) Reset() {

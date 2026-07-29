@@ -1,6 +1,7 @@
 package dgo
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"testing"
@@ -50,5 +51,36 @@ func TestParseSecureFrameRejectsTrailingNonceBytes(t *testing.T) {
 
 	if _, _, _, err := parseSecureFrame(frame); err == nil {
 		t.Fatal("parseSecureFrame accepted trailing nonce bytes")
+	}
+}
+
+func TestDAVERejectsPlaintextOnlyWhileActive(t *testing.T) {
+	dave := NewDAVESession("1")
+	plaintext := []byte("unencrypted audio")
+
+	got, err := dave.DecryptFrame(1, plaintext)
+	if err != nil {
+		t.Fatalf("inactive DecryptFrame returned error: %v", err)
+	}
+	if string(got) != string(plaintext) {
+		t.Fatalf("inactive DecryptFrame = %x, want %x", got, plaintext)
+	}
+
+	dave.active = true
+	if _, err = dave.DecryptFrame(1, plaintext); !errors.Is(err, errUnencryptedDAVEFrame) {
+		t.Fatalf("active DecryptFrame error = %v, want %v", err, errUnencryptedDAVEFrame)
+	}
+}
+
+func TestDAVEEncryptionFailsClosed(t *testing.T) {
+	dave := NewDAVESession("1")
+	dave.active = true
+
+	encrypted, err := dave.EncryptFrame([]byte("sensitive audio"))
+	if err == nil {
+		t.Fatal("EncryptFrame succeeded without an active frame cipher")
+	}
+	if encrypted != nil {
+		t.Fatalf("EncryptFrame returned plaintext fallback: %x", encrypted)
 	}
 }

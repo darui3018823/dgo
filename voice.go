@@ -1127,7 +1127,6 @@ func (v *VoiceConnection) opusReceiver(udpConn *net.UDPConn, close <-chan struct
 	}
 
 	recvbuf := make([]byte, 2048)
-	var nonce = make([]byte, v.aead.NonceSize())
 
 	for {
 		rlen, err := udpConn.Read(recvbuf)
@@ -1155,45 +1154,13 @@ func (v *VoiceConnection) opusReceiver(udpConn *net.UDPConn, close <-chan struct
 			// continue loop
 		}
 
-		// For now, skip anything except audio.
-		if rlen < 12 || (recvbuf[0] != 0x80 && recvbuf[0] != 0x90) {
-			continue
-		}
-
-		// build a audio packet struct
-		p := Packet{}
-		p.Flags = recvbuf[0]
-		p.PayloadType = recvbuf[1]
-		extentionExist := (p.Flags & 0x10) != 0 // RFC 3550 5.1
-		csrcCount := (p.Flags & 0x0f)           // RFC 3550 5.1
-		p.Sequence = binary.BigEndian.Uint16(recvbuf[2:4])
-		p.Timestamp = binary.BigEndian.Uint32(recvbuf[4:8])
-		p.SSRC = binary.BigEndian.Uint32(recvbuf[8:12])
-		p.CSRC = make([]uint32, csrcCount)
-		for i := range p.CSRC {
-			p.CSRC[i] = binary.BigEndian.Uint32(recvbuf[12+4*i : 12+4*(i+1)])
-		}
-		plainLength := 12 + 4*int(csrcCount)
-		if extentionExist {
-			plainLength += 4
-		}
-
-		// decrypt opus data
-		copy(nonce, recvbuf[rlen-4:rlen])
-
 		v.RLock()
-		p.Opus, err = v.aead.Open(recvbuf[plainLength:plainLength], nonce, recvbuf[plainLength:rlen-4], recvbuf[:plainLength])
+		aead := v.aead
 		v.RUnlock()
+		p, err := decodeVoicePacket(recvbuf[:rlen], aead)
 		if err != nil {
-			v.log(LogInformational, "failed to open udp packet, %v", err)
+			v.log(LogInformational, "dropping invalid voice UDP packet: %v", err)
 			continue
-		}
-
-		if extentionExist {
-			extensionBegin := 12 + 4*int(csrcCount)
-			extensionLength := binary.BigEndian.Uint16(recvbuf[extensionBegin+2 : extensionBegin+4])
-			p.Extension = recvbuf[extensionBegin : extensionBegin+4+int(extensionLength)*4]
-			p.Opus = p.Opus[int(extensionLength)*4:]
 		}
 
 		v.RLock()
@@ -1210,12 +1177,87 @@ func (v *VoiceConnection) opusReceiver(udpConn *net.UDPConn, close <-chan struct
 
 		if c != nil {
 			select {
-			case c <- &p:
+			case c <- p:
 			case <-close:
 				return
 			}
 		}
 	}
+}
+
+func decodeVoicePacket(data []byte, aead cipher.AEAD) (*Packet, error) {
+	const (
+		rtpFixedHeaderSize = 12
+		nonceSuffixSize    = 4
+	)
+
+	if aead == nil {
+		return nil, fmt.Errorf("voice transport cipher is not initialized")
+	}
+	if aead.NonceSize() < nonceSuffixSize {
+		return nil, fmt.Errorf("voice transport nonce size %d is too small", aead.NonceSize())
+	}
+	if len(data) < rtpFixedHeaderSize {
+		return nil, fmt.Errorf("RTP packet too short: %d bytes", len(data))
+	}
+	if data[0]&0xC0 != 0x80 {
+		return nil, fmt.Errorf("unsupported RTP version flags %#x", data[0])
+	}
+
+	csrcCount := int(data[0] & 0x0F)
+	headerLength := rtpFixedHeaderSize + 4*csrcCount
+	if len(data) < headerLength {
+		return nil, fmt.Errorf("RTP packet truncated in CSRC list")
+	}
+
+	hasExtension := data[0]&0x10 != 0
+	extensionStart := headerLength
+	if hasExtension {
+		headerLength += 4
+		if len(data) < headerLength {
+			return nil, fmt.Errorf("RTP packet truncated in extension header")
+		}
+	}
+
+	minimumLength := headerLength + aead.Overhead() + nonceSuffixSize
+	if len(data) < minimumLength {
+		return nil, fmt.Errorf("RTP packet lacks ciphertext, authentication tag, or nonce")
+	}
+
+	nonce := make([]byte, aead.NonceSize())
+	copy(nonce, data[len(data)-nonceSuffixSize:])
+	plaintext, err := aead.Open(nil, nonce, data[headerLength:len(data)-nonceSuffixSize], data[:headerLength])
+	if err != nil {
+		return nil, fmt.Errorf("opening voice transport packet: %w", err)
+	}
+
+	packet := &Packet{
+		Flags:       data[0],
+		PayloadType: data[1],
+		Sequence:    binary.BigEndian.Uint16(data[2:4]),
+		Timestamp:   binary.BigEndian.Uint32(data[4:8]),
+		SSRC:        binary.BigEndian.Uint32(data[8:12]),
+		CSRC:        make([]uint32, csrcCount),
+	}
+	for i := range packet.CSRC {
+		offset := rtpFixedHeaderSize + 4*i
+		packet.CSRC[i] = binary.BigEndian.Uint32(data[offset : offset+4])
+	}
+
+	if hasExtension {
+		extensionWords := int(binary.BigEndian.Uint16(data[extensionStart+2 : extensionStart+4]))
+		extensionDataLength := extensionWords * 4
+		if extensionDataLength > len(plaintext) {
+			return nil, fmt.Errorf("RTP extension length %d exceeds plaintext length %d", extensionDataLength, len(plaintext))
+		}
+		packet.Extension = make([]byte, 4+extensionDataLength)
+		copy(packet.Extension, data[extensionStart:extensionStart+4])
+		copy(packet.Extension[4:], plaintext[:extensionDataLength])
+		plaintext = plaintext[extensionDataLength:]
+	}
+
+	packet.Opus = plaintext
+	return packet, nil
 }
 
 // Reconnect will close down a voice connection then immediately try to

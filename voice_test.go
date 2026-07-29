@@ -1,6 +1,9 @@
 package dgo
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/binary"
 	"testing"
 	"time"
 )
@@ -71,4 +74,90 @@ func TestClassifyVoiceCloseCode(t *testing.T) {
 func TestVoiceHeartbeatRejectsInvalidInterval(t *testing.T) {
 	v := &VoiceConnection{LogLevel: -1}
 	v.wsHeartbeat(nil, nil, 0)
+}
+
+func testVoiceAEAD(t testing.TB) cipher.AEAD {
+	t.Helper()
+	block, err := aes.NewCipher(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return aead
+}
+
+func sealVoicePacket(t testing.TB, aead cipher.AEAD, header, plaintext []byte, nonceValue uint32) []byte {
+	t.Helper()
+	nonce := make([]byte, aead.NonceSize())
+	binary.LittleEndian.PutUint32(nonce, nonceValue)
+	packet := append([]byte(nil), header...)
+	packet = aead.Seal(packet, nonce, plaintext, header)
+	return append(packet, nonce[:4]...)
+}
+
+func TestDecodeVoicePacket(t *testing.T) {
+	aead := testVoiceAEAD(t)
+	header := make([]byte, 12)
+	header[0] = 0x80
+	header[1] = 0x78
+	binary.BigEndian.PutUint16(header[2:4], 7)
+	binary.BigEndian.PutUint32(header[4:8], 960)
+	binary.BigEndian.PutUint32(header[8:12], 42)
+
+	packet, err := decodeVoicePacket(sealVoicePacket(t, aead, header, []byte("opus"), 1), aead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if packet.Sequence != 7 || packet.Timestamp != 960 || packet.SSRC != 42 || string(packet.Opus) != "opus" {
+		t.Fatalf("decoded packet = %#v", packet)
+	}
+}
+
+func TestDecodeVoicePacketExtension(t *testing.T) {
+	aead := testVoiceAEAD(t)
+	header := make([]byte, 16)
+	header[0] = 0x90
+	header[1] = 0x78
+	binary.BigEndian.PutUint16(header[14:16], 1)
+	extensionData := []byte{1, 2, 3, 4}
+	plaintext := append(append([]byte(nil), extensionData...), []byte("opus")...)
+
+	packet, err := decodeVoicePacket(sealVoicePacket(t, aead, header, plaintext, 2), aead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(packet.Extension) != 8 || string(packet.Extension[4:]) != string(extensionData) {
+		t.Fatalf("decoded extension = %x", packet.Extension)
+	}
+	if string(packet.Opus) != "opus" {
+		t.Fatalf("decoded opus = %q", packet.Opus)
+	}
+}
+
+func TestDecodeVoicePacketRejectsMalformedBounds(t *testing.T) {
+	aead := testVoiceAEAD(t)
+	tests := [][]byte{
+		nil,
+		make([]byte, 11),
+		append([]byte{0x8f}, make([]byte, 11)...),
+		append([]byte{0x90}, make([]byte, 11)...),
+		append([]byte{0x80}, make([]byte, 20)...),
+	}
+	for _, data := range tests {
+		if _, err := decodeVoicePacket(data, aead); err == nil {
+			t.Errorf("decodeVoicePacket(%x) succeeded", data)
+		}
+	}
+}
+
+func FuzzDecodeVoicePacket(f *testing.F) {
+	aead := testVoiceAEAD(f)
+	f.Add([]byte{})
+	f.Add(make([]byte, 12))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = decodeVoicePacket(data, aead)
+	})
 }

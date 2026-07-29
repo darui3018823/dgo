@@ -72,6 +72,45 @@ jobs:
         working-directory: ${{ matrix.module.path }}
         run: go vet ./...
 
+  coverage:
+    name: Coverage ${{ matrix.module.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - name: root
+            path: .
+            mod: go.mod
+            sum: go.sum
+            minimum: 31
+          - name: linked_roles
+            path: examples/linked_roles
+            mod: examples/linked_roles/go.mod
+            sum: examples/linked_roles/go.sum
+            minimum: 60
+          - name: voice_receive
+            path: examples/voice_receive
+            mod: examples/voice_receive/go.mod
+            sum: examples/voice_receive/go.sum
+            minimum: 40
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ matrix.module.mod }}
+          cache-dependency-path: ${{ matrix.module.sum }}
+      - name: Enforce statement coverage floor
+        working-directory: ${{ matrix.module.path }}
+        shell: bash
+        run: |
+          go test -coverprofile=coverage.out ./...
+          coverage="$(go tool cover -func=coverage.out | awk '/^total:/ {gsub("%", "", $3); print $3}')"
+          echo "statement coverage: ${coverage}% (minimum ${{ matrix.module.minimum }}%)"
+          awk -v actual="${coverage}" -v minimum="${{ matrix.module.minimum }}" \
+            'BEGIN { if (actual + 0 < minimum + 0) exit 1 }'
+
   staticcheck:
     name: Staticcheck ${{ matrix.module.name }}
     runs-on: ubuntu-latest

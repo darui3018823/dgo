@@ -4098,12 +4098,23 @@ func (s *Session) InteractionResponseDelete(interaction *Interaction, options ..
 	return err
 }
 
-// FollowupMessageCreate creates the followup message for an interaction.
-// interaction : Interaction instance.
-// wait        : Waits for server confirmation of message send and ensures that the return struct is populated (it is nil otherwise)
-// data        : Data of the message to send.
-func (s *Session) FollowupMessageCreate(interaction *Interaction, wait bool, data *WebhookParams, options ...RequestOption) (*Message, error) {
-	return s.WebhookExecute(interaction.AppID, interaction.Token, wait, data, options...)
+// FollowupMessageCreate creates a followup message for an interaction.
+// Discord always waits for interaction followups, so wait is ignored and the
+// returned Message is always decoded.
+//
+// Deprecated: use FollowupMessageCreateComplex, which omits the inapplicable
+// wait parameter.
+func (s *Session) FollowupMessageCreate(interaction *Interaction, _ bool, data *WebhookParams, options ...RequestOption) (*Message, error) {
+	return s.FollowupMessageCreateComplex(interaction, data, options...)
+}
+
+// FollowupMessageCreateComplex creates a followup message and returns Discord's
+// message object. Interaction followup endpoints always behave as wait=true.
+func (s *Session) FollowupMessageCreateComplex(interaction *Interaction, data *WebhookParams, options ...RequestOption) (*Message, error) {
+	if interaction == nil {
+		return nil, fmt.Errorf("interaction must not be nil")
+	}
+	return s.WebhookExecute(interaction.AppID, interaction.Token, true, data, options...)
 }
 
 // FollowupMessageEdit edits a followup message of an interaction.

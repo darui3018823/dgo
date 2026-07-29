@@ -139,7 +139,7 @@ var (
 				panic(err)
 			}
 			time.Sleep(time.Second) // Doing that so user won't see instant response.
-			_, err = s.FollowupMessageCreate(i.Interaction, true, &dgo.WebhookParams{
+			_, err = s.FollowupMessageCreateComplex(i.Interaction, &dgo.WebhookParams{
 				Content: "Anyways, now when you know how to use single select menus, let's see how multi select menus work. " +
 					"Try calling `/selects multi` command.",
 				Flags: dgo.MessageFlagsEphemeral,
@@ -164,7 +164,7 @@ var (
 				panic(err)
 			}
 			time.Sleep(time.Second) // Doing that so user won't see instant response.
-			_, err = s.FollowupMessageCreate(i.Interaction, true, &dgo.WebhookParams{
+			_, err = s.FollowupMessageCreateComplex(i.Interaction, &dgo.WebhookParams{
 				Content: "But wait, there is more! You can also auto populate the select menu. Try executing `/selects auto-populated`.",
 				Flags:   dgo.MessageFlagsEphemeral,
 			})

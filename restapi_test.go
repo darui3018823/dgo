@@ -1091,6 +1091,49 @@ func TestGuildEditDoesNotFetchVoiceRegions(t *testing.T) {
 	}
 }
 
+func TestFollowupMessageCreateAlwaysWaitsForMessage(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Ratelimiter.GlobalRateLimit = 0
+	requests := 0
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		if request.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", request.Method)
+		}
+		if request.URL.Query().Get("wait") != "true" {
+			t.Fatalf("followup query = %q, want wait=true", request.URL.RawQuery)
+		}
+		return jsonResponse(http.StatusOK, fmt.Sprintf(`{"id":"message-%d"}`, requests)), nil
+	})
+	interaction := &Interaction{AppID: "app", Token: "interaction-token"}
+
+	message, err := session.FollowupMessageCreate(
+		interaction,
+		false,
+		&WebhookParams{Content: "legacy call"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message == nil || message.ID != "message-1" {
+		t.Fatalf("legacy followup message = %#v", message)
+	}
+
+	message, err = session.FollowupMessageCreateComplex(
+		interaction,
+		&WebhookParams{Content: "current call"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message == nil || message.ID != "message-2" {
+		t.Fatalf("current followup message = %#v", message)
+	}
+}
+
 func TestRequestRawBoundsRateLimitRetriesAndClosesBodies(t *testing.T) {
 	session, err := New("Bot token")
 	if err != nil {

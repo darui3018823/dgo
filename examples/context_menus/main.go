@@ -85,7 +85,7 @@ var (
 				i.ApplicationCommandData().TargetID,
 			)
 			if err != nil {
-				_, err = s.FollowupMessageCreate(i.Interaction, true, &dgo.WebhookParams{
+				_, err = s.FollowupMessageCreateComplex(i.Interaction, &dgo.WebhookParams{
 					Content: fmt.Sprintf("Mission failed. Cannot send a message to this user: %q", err.Error()),
 					Flags:   dgo.MessageFlagsEphemeral,
 				})

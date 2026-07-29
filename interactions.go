@@ -394,10 +394,11 @@ type MessageComponentInteractionData struct {
 
 // MessageComponentInteractionDataResolved contains the resolved data of selected option.
 type MessageComponentInteractionDataResolved struct {
-	Users    map[string]*User    `json:"users"`
-	Members  map[string]*Member  `json:"members"`
-	Roles    map[string]*Role    `json:"roles"`
-	Channels map[string]*Channel `json:"channels"`
+	Users       map[string]*User              `json:"users"`
+	Members     map[string]*Member            `json:"members"`
+	Roles       map[string]*Role              `json:"roles"`
+	Channels    map[string]*Channel           `json:"channels"`
+	Attachments map[string]*MessageAttachment `json:"attachments"`
 }
 
 // Type returns the type of interaction data.
@@ -407,8 +408,9 @@ func (MessageComponentInteractionData) Type() InteractionType {
 
 // ModalSubmitInteractionData contains the data of modal submit interaction.
 type ModalSubmitInteractionData struct {
-	CustomID   string             `json:"custom_id"`
-	Components []MessageComponent `json:"-"`
+	CustomID   string                                  `json:"custom_id"`
+	Components []MessageComponent                      `json:"-"`
+	Resolved   MessageComponentInteractionDataResolved `json:"resolved"`
 }
 
 // Type returns the type of interaction data.

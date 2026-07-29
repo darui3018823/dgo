@@ -25,6 +25,11 @@ const (
 	FileComponentType              ComponentType = 13
 	SeparatorComponent             ComponentType = 14
 	ContainerComponent             ComponentType = 17
+	LabelComponent                 ComponentType = 18
+	FileUploadComponent            ComponentType = 19
+	RadioGroupComponent            ComponentType = 21
+	CheckboxGroupComponent         ComponentType = 22
+	CheckboxComponent              ComponentType = 23
 )
 
 // MessageComponent is a base interface for all message components.
@@ -71,8 +76,18 @@ func (umc *unmarshalableMessageComponent) UnmarshalJSON(src []byte) error {
 		umc.MessageComponent = &Separator{}
 	case ContainerComponent:
 		umc.MessageComponent = &Container{}
+	case LabelComponent:
+		umc.MessageComponent = &Label{}
+	case FileUploadComponent:
+		umc.MessageComponent = &FileUpload{}
+	case RadioGroupComponent:
+		umc.MessageComponent = &RadioGroup{}
+	case CheckboxGroupComponent:
+		umc.MessageComponent = &CheckboxGroup{}
+	case CheckboxComponent:
+		umc.MessageComponent = &Checkbox{}
 	default:
-		return fmt.Errorf("unknown component type: %d", v.Type)
+		umc.MessageComponent = &UnknownComponent{}
 	}
 	return json.Unmarshal(src, umc.MessageComponent)
 }
@@ -85,6 +100,42 @@ func MessageComponentFromJSON(b []byte) (MessageComponent, error) {
 		return nil, fmt.Errorf("failed to unmarshal into MessageComponent: %w", err)
 	}
 	return u.MessageComponent, nil
+}
+
+// UnknownComponent preserves a component whose type is not yet known by this
+// version of dgo. This allows interaction payloads to remain decodable when
+// Discord introduces a new component type.
+type UnknownComponent struct {
+	ComponentType ComponentType   `json:"-"`
+	Raw           json.RawMessage `json:"-"`
+}
+
+// Type returns the component type found in the original payload.
+func (c UnknownComponent) Type() ComponentType {
+	return c.ComponentType
+}
+
+// UnmarshalJSON preserves the complete unknown component payload.
+func (c *UnknownComponent) UnmarshalJSON(data []byte) error {
+	var header struct {
+		Type ComponentType `json:"type"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return err
+	}
+	c.ComponentType = header.Type
+	c.Raw = append(c.Raw[:0], data...)
+	return nil
+}
+
+// MarshalJSON writes the original unknown component payload unchanged.
+func (c UnknownComponent) MarshalJSON() ([]byte, error) {
+	if len(c.Raw) == 0 {
+		return json.Marshal(struct {
+			Type ComponentType `json:"type"`
+		}{Type: c.ComponentType})
+	}
+	return append([]byte(nil), c.Raw...), nil
 }
 
 // ActionsRow is a top-level container component for displaying a row of interactive components.
@@ -258,12 +309,16 @@ type SelectMenu struct {
 
 	Options  []SelectMenuOption `json:"options,omitempty"`
 	Disabled bool               `json:"disabled"`
+	Required *bool              `json:"required,omitempty"`
 
 	// NOTE: Can only be used in SelectMenu with Channel menu type.
 	ChannelTypes []ChannelType `json:"channel_types,omitempty"`
 
 	// Unique identifier for the component; auto populated through increment if not provided.
 	ID int `json:"id,omitempty"`
+
+	// Values is populated only when receiving a modal submit interaction.
+	Values []string `json:"values,omitempty"`
 }
 
 // Type is a method to get the type of a component.
@@ -575,6 +630,186 @@ func (c Container) MarshalJSON() ([]byte, error) {
 	}{
 		container: container(c),
 		Type:      c.Type(),
+	})
+}
+
+// Label is a top-level modal layout component that associates text with one
+// interactive child component.
+type Label struct {
+	ID          int              `json:"id,omitempty"`
+	Label       string           `json:"label"`
+	Description string           `json:"description,omitempty"`
+	Component   MessageComponent `json:"component"`
+}
+
+// NewLabel creates a Label containing a modal component.
+func NewLabel(label string, component MessageComponent) *Label {
+	return &Label{Label: label, Component: component}
+}
+
+// Type returns the component type.
+func (Label) Type() ComponentType {
+	return LabelComponent
+}
+
+// UnmarshalJSON decodes the nested label component.
+func (l *Label) UnmarshalJSON(data []byte) error {
+	type label Label
+	var v struct {
+		label
+		RawComponent unmarshalableMessageComponent `json:"component"`
+	}
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	*l = Label(v.label)
+	l.Component = v.RawComponent.MessageComponent
+	return nil
+}
+
+// MarshalJSON is a method for marshaling Label to a JSON object.
+func (l Label) MarshalJSON() ([]byte, error) {
+	type label Label
+	return Marshal(struct {
+		label
+		Type ComponentType `json:"type"`
+	}{
+		label: label(l),
+		Type:  l.Type(),
+	})
+}
+
+// FileUpload is an interactive modal component for uploading files.
+type FileUpload struct {
+	ID        int      `json:"id,omitempty"`
+	CustomID  string   `json:"custom_id,omitempty"`
+	MinValues *int     `json:"min_values,omitempty"`
+	MaxValues int      `json:"max_values,omitempty"`
+	Required  *bool    `json:"required,omitempty"`
+	Values    []string `json:"values,omitempty"`
+}
+
+// NewFileUpload creates a FileUpload with the given custom ID.
+func NewFileUpload(customID string) *FileUpload {
+	return &FileUpload{CustomID: customID}
+}
+
+// Type returns the component type.
+func (FileUpload) Type() ComponentType {
+	return FileUploadComponent
+}
+
+// MarshalJSON is a method for marshaling FileUpload to a JSON object.
+func (f FileUpload) MarshalJSON() ([]byte, error) {
+	type fileUpload FileUpload
+	return Marshal(struct {
+		fileUpload
+		Type ComponentType `json:"type"`
+	}{
+		fileUpload: fileUpload(f),
+		Type:       f.Type(),
+	})
+}
+
+// ModalChoiceOption is an option in a RadioGroup or CheckboxGroup.
+type ModalChoiceOption struct {
+	Value       string `json:"value"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+	Default     bool   `json:"default,omitempty"`
+}
+
+// RadioGroup is an interactive modal component for choosing exactly one option.
+type RadioGroup struct {
+	ID       int                 `json:"id,omitempty"`
+	CustomID string              `json:"custom_id,omitempty"`
+	Options  []ModalChoiceOption `json:"options,omitempty"`
+	Required *bool               `json:"required,omitempty"`
+	Value    *string             `json:"value,omitempty"`
+}
+
+// NewRadioGroup creates a RadioGroup with the given custom ID and options.
+func NewRadioGroup(customID string, options ...ModalChoiceOption) *RadioGroup {
+	return &RadioGroup{CustomID: customID, Options: options}
+}
+
+// Type returns the component type.
+func (RadioGroup) Type() ComponentType {
+	return RadioGroupComponent
+}
+
+// MarshalJSON is a method for marshaling RadioGroup to a JSON object.
+func (r RadioGroup) MarshalJSON() ([]byte, error) {
+	type radioGroup RadioGroup
+	return Marshal(struct {
+		radioGroup
+		Type ComponentType `json:"type"`
+	}{
+		radioGroup: radioGroup(r),
+		Type:       r.Type(),
+	})
+}
+
+// CheckboxGroup is an interactive modal component for choosing one or more options.
+type CheckboxGroup struct {
+	ID        int                 `json:"id,omitempty"`
+	CustomID  string              `json:"custom_id,omitempty"`
+	Options   []ModalChoiceOption `json:"options,omitempty"`
+	MinValues *int                `json:"min_values,omitempty"`
+	MaxValues int                 `json:"max_values,omitempty"`
+	Required  *bool               `json:"required,omitempty"`
+	Values    []string            `json:"values,omitempty"`
+}
+
+// NewCheckboxGroup creates a CheckboxGroup with the given custom ID and options.
+func NewCheckboxGroup(customID string, options ...ModalChoiceOption) *CheckboxGroup {
+	return &CheckboxGroup{CustomID: customID, Options: options}
+}
+
+// Type returns the component type.
+func (CheckboxGroup) Type() ComponentType {
+	return CheckboxGroupComponent
+}
+
+// MarshalJSON is a method for marshaling CheckboxGroup to a JSON object.
+func (c CheckboxGroup) MarshalJSON() ([]byte, error) {
+	type checkboxGroup CheckboxGroup
+	return Marshal(struct {
+		checkboxGroup
+		Type ComponentType `json:"type"`
+	}{
+		checkboxGroup: checkboxGroup(c),
+		Type:          c.Type(),
+	})
+}
+
+// Checkbox is an interactive modal component for a single boolean choice.
+type Checkbox struct {
+	ID       int    `json:"id,omitempty"`
+	CustomID string `json:"custom_id,omitempty"`
+	Default  bool   `json:"default,omitempty"`
+	Value    bool   `json:"value,omitempty"`
+}
+
+// NewCheckbox creates a Checkbox with the given custom ID.
+func NewCheckbox(customID string) *Checkbox {
+	return &Checkbox{CustomID: customID}
+}
+
+// Type returns the component type.
+func (Checkbox) Type() ComponentType {
+	return CheckboxComponent
+}
+
+// MarshalJSON is a method for marshaling Checkbox to a JSON object.
+func (c Checkbox) MarshalJSON() ([]byte, error) {
+	type checkbox Checkbox
+	return Marshal(struct {
+		checkbox
+		Type ComponentType `json:"type"`
+	}{
+		checkbox: checkbox(c),
+		Type:     c.Type(),
 	})
 }
 

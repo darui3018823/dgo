@@ -24,26 +24,43 @@ type MessageType int
 
 // Block contains the valid known MessageType values
 const (
-	MessageTypeDefault                               MessageType = 0
-	MessageTypeRecipientAdd                          MessageType = 1
-	MessageTypeRecipientRemove                       MessageType = 2
-	MessageTypeCall                                  MessageType = 3
-	MessageTypeChannelNameChange                     MessageType = 4
-	MessageTypeChannelIconChange                     MessageType = 5
-	MessageTypeChannelPinnedMessage                  MessageType = 6
-	MessageTypeGuildMemberJoin                       MessageType = 7
-	MessageTypeUserPremiumGuildSubscription          MessageType = 8
-	MessageTypeUserPremiumGuildSubscriptionTierOne   MessageType = 9
-	MessageTypeUserPremiumGuildSubscriptionTierTwo   MessageType = 10
-	MessageTypeUserPremiumGuildSubscriptionTierThree MessageType = 11
-	MessageTypeChannelFollowAdd                      MessageType = 12
-	MessageTypeGuildDiscoveryDisqualified            MessageType = 14
-	MessageTypeGuildDiscoveryRequalified             MessageType = 15
-	MessageTypeThreadCreated                         MessageType = 18
-	MessageTypeReply                                 MessageType = 19
-	MessageTypeChatInputCommand                      MessageType = 20
-	MessageTypeThreadStarterMessage                  MessageType = 21
-	MessageTypeContextMenuCommand                    MessageType = 23
+	MessageTypeDefault                                 MessageType = 0
+	MessageTypeRecipientAdd                            MessageType = 1
+	MessageTypeRecipientRemove                         MessageType = 2
+	MessageTypeCall                                    MessageType = 3
+	MessageTypeChannelNameChange                       MessageType = 4
+	MessageTypeChannelIconChange                       MessageType = 5
+	MessageTypeChannelPinnedMessage                    MessageType = 6
+	MessageTypeGuildMemberJoin                         MessageType = 7
+	MessageTypeUserPremiumGuildSubscription            MessageType = 8
+	MessageTypeUserPremiumGuildSubscriptionTierOne     MessageType = 9
+	MessageTypeUserPremiumGuildSubscriptionTierTwo     MessageType = 10
+	MessageTypeUserPremiumGuildSubscriptionTierThree   MessageType = 11
+	MessageTypeChannelFollowAdd                        MessageType = 12
+	MessageTypeGuildDiscoveryDisqualified              MessageType = 14
+	MessageTypeGuildDiscoveryRequalified               MessageType = 15
+	MessageTypeGuildDiscoveryGracePeriodInitialWarning MessageType = 16
+	MessageTypeGuildDiscoveryGracePeriodFinalWarning   MessageType = 17
+	MessageTypeThreadCreated                           MessageType = 18
+	MessageTypeReply                                   MessageType = 19
+	MessageTypeChatInputCommand                        MessageType = 20
+	MessageTypeThreadStarterMessage                    MessageType = 21
+	MessageTypeGuildInviteReminder                     MessageType = 22
+	MessageTypeContextMenuCommand                      MessageType = 23
+	MessageTypeAutoModerationAction                    MessageType = 24
+	MessageTypeRoleSubscriptionPurchase                MessageType = 25
+	MessageTypeInteractionPremiumUpsell                MessageType = 26
+	MessageTypeStageStart                              MessageType = 27
+	MessageTypeStageEnd                                MessageType = 28
+	MessageTypeStageSpeaker                            MessageType = 29
+	MessageTypeStageTopic                              MessageType = 31
+	MessageTypeGuildApplicationPremiumSubscription     MessageType = 32
+	MessageTypeGuildIncidentAlertModeEnabled           MessageType = 36
+	MessageTypeGuildIncidentAlertModeDisabled          MessageType = 37
+	MessageTypeGuildIncidentReportRaid                 MessageType = 38
+	MessageTypeGuildIncidentReportFalseAlarm           MessageType = 39
+	MessageTypePurchaseNotification                    MessageType = 44
+	MessageTypePollResult                              MessageType = 46
 )
 
 // A Message stores all data related to a specific Discord message.
@@ -98,6 +115,10 @@ type Message struct {
 	// A list of reactions to the message.
 	Reactions []*MessageReactions `json:"reactions"`
 
+	// A client-provided value used to validate that a message was sent.
+	// It is kept raw because Discord may return either a string or an integer.
+	Nonce json.RawMessage `json:"nonce,omitempty"`
+
 	// Whether the message is pinned or not.
 	Pinned bool `json:"pinned"`
 
@@ -123,6 +144,9 @@ type Message struct {
 
 	// Is sent with Rich Presence-related chat embeds
 	Application *MessageApplication `json:"application"`
+
+	// The ID of the application that owns an interaction or application webhook message.
+	ApplicationID string `json:"application_id"`
 
 	// MessageReference contains reference data sent with crossposted or reply messages.
 	// This does not contain the reference *to* this message; this is for when *this* message references another.
@@ -160,8 +184,26 @@ type Message struct {
 	// An array of StickerItem objects, representing sent stickers, if there were any.
 	StickerItems []*StickerItem `json:"sticker_items"`
 
+	// Deprecated: the full sticker objects sent with this message.
+	Stickers []*Sticker `json:"stickers"`
+
+	// The approximate position of this message in a thread.
+	Position *int `json:"position"`
+
+	// Subscription data associated with a role subscription purchase or renewal.
+	RoleSubscriptionData *RoleSubscriptionData `json:"role_subscription_data"`
+
+	// Users, members, channels, roles, messages, and attachments referenced by the message.
+	Resolved *ApplicationCommandInteractionDataResolved `json:"resolved"`
+
 	// A poll object.
 	Poll *Poll `json:"poll"`
+
+	// The private-channel call associated with this message.
+	Call *MessageCall `json:"call"`
+
+	// The client theme shared through this message.
+	SharedClientTheme *SharedClientTheme `json:"shared_client_theme"`
 }
 
 // MessagePin contains a pinned message and the time it was pinned.
@@ -352,6 +394,8 @@ const (
 	MessageFlagsSuppressNotifications MessageFlags = 1 << 12
 	// MessageFlagsIsVoiceMessage this message is a voice message.
 	MessageFlagsIsVoiceMessage MessageFlags = 1 << 13
+	// MessageFlagsHasSnapshot this message contains a forwarded message snapshot.
+	MessageFlagsHasSnapshot MessageFlags = 1 << 14
 	// MessageFlagsIsComponentsV2 this message uses the new components system. Disables the ability of sending `content` & `embeds`
 	MessageFlagsIsComponentsV2 MessageFlags = 1 << 15
 )
@@ -365,16 +409,19 @@ type File struct {
 
 // MessageSend stores all parameters you can send with ChannelMessageSendComplex.
 type MessageSend struct {
-	Content         string                  `json:"content,omitempty"`
-	Embeds          []*MessageEmbed         `json:"embeds"`
-	TTS             bool                    `json:"tts"`
-	Components      []MessageComponent      `json:"components"`
-	Files           []*File                 `json:"-"`
-	AllowedMentions *MessageAllowedMentions `json:"allowed_mentions,omitempty"`
-	Reference       *MessageReference       `json:"message_reference,omitempty"`
-	StickerIDs      []string                `json:"sticker_ids"`
-	Flags           MessageFlags            `json:"flags,omitempty"`
-	Poll            *Poll                   `json:"poll,omitempty"`
+	Content           string                  `json:"content,omitempty"`
+	Embeds            []*MessageEmbed         `json:"embeds"`
+	TTS               bool                    `json:"tts"`
+	Components        []MessageComponent      `json:"components"`
+	Files             []*File                 `json:"-"`
+	AllowedMentions   *MessageAllowedMentions `json:"allowed_mentions,omitempty"`
+	Reference         *MessageReference       `json:"message_reference,omitempty"`
+	StickerIDs        []string                `json:"sticker_ids"`
+	Flags             MessageFlags            `json:"flags,omitempty"`
+	Poll              *Poll                   `json:"poll,omitempty"`
+	Nonce             interface{}             `json:"nonce,omitempty"`
+	EnforceNonce      bool                    `json:"enforce_nonce,omitempty"`
+	SharedClientTheme *SharedClientTheme      `json:"shared_client_theme,omitempty"`
 
 	// TODO: Remove this when compatibility is not required.
 	File *File `json:"-"`
@@ -627,12 +674,13 @@ type EmbedType string
 
 // Block of valid EmbedTypes
 const (
-	EmbedTypeRich    EmbedType = "rich"
-	EmbedTypeImage   EmbedType = "image"
-	EmbedTypeVideo   EmbedType = "video"
-	EmbedTypeGifv    EmbedType = "gifv"
-	EmbedTypeArticle EmbedType = "article"
-	EmbedTypeLink    EmbedType = "link"
+	EmbedTypeRich       EmbedType = "rich"
+	EmbedTypeImage      EmbedType = "image"
+	EmbedTypeVideo      EmbedType = "video"
+	EmbedTypeGifv       EmbedType = "gifv"
+	EmbedTypeArticle    EmbedType = "article"
+	EmbedTypeLink       EmbedType = "link"
+	EmbedTypePollResult EmbedType = "poll_result"
 )
 
 // MessageReactions holds a reactions object for a message.
@@ -696,6 +744,40 @@ type MessageApplication struct {
 	Icon        string `json:"icon"`
 	Name        string `json:"name"`
 }
+
+// RoleSubscriptionData describes the subscription purchase or renewal that generated a message.
+type RoleSubscriptionData struct {
+	RoleSubscriptionListingID string `json:"role_subscription_listing_id"`
+	TierName                  string `json:"tier_name"`
+	TotalMonthsSubscribed     int    `json:"total_months_subscribed"`
+	IsRenewal                 bool   `json:"is_renewal"`
+}
+
+// MessageCall describes a private-channel call associated with a message.
+type MessageCall struct {
+	Participants   []string   `json:"participants"`
+	EndedTimestamp *time.Time `json:"ended_timestamp"`
+}
+
+// SharedClientTheme contains a client-side theme shared in a message.
+type SharedClientTheme struct {
+	Colors        []string               `json:"colors"`
+	GradientAngle int                    `json:"gradient_angle"`
+	BaseMix       int                    `json:"base_mix"`
+	BaseTheme     *SharedClientThemeBase `json:"base_theme"`
+}
+
+// SharedClientThemeBase identifies a shared theme's base appearance.
+type SharedClientThemeBase int
+
+// Known shared client theme bases.
+const (
+	SharedClientThemeBaseUnset    SharedClientThemeBase = 0
+	SharedClientThemeBaseDark     SharedClientThemeBase = 1
+	SharedClientThemeBaseLight    SharedClientThemeBase = 2
+	SharedClientThemeBaseDarker   SharedClientThemeBase = 3
+	SharedClientThemeBaseMidnight SharedClientThemeBase = 4
+)
 
 // MessageSnapshot represents a snapshot of a forwarded message.
 // https://discord.com/developers/docs/resources/message#message-snapshot-object
@@ -837,6 +919,10 @@ type MessageInteractionMetadata struct {
 	// ID of the original response message.
 	// NOTE: present only on followup messages.
 	OriginalResponseMessageID string `json:"original_response_message_id,omitempty"`
+	// User targeted by a user command interaction.
+	TargetUser *User `json:"target_user,omitempty"`
+	// ID of the message targeted by a message command interaction.
+	TargetMessageID string `json:"target_message_id,omitempty"`
 	// ID of the message that contained interactive component.
 	// NOTE: present only on message component interactions.
 	InteractedMessageID string `json:"interacted_message_id,omitempty"`

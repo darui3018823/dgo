@@ -54,3 +54,24 @@ func TestOnEventVoiceChannelStatusUpdate(t *testing.T) {
 		t.Errorf("Status = %q, want nil", *update.Status)
 	}
 }
+
+func TestOnEventStageInstanceCreate(t *testing.T) {
+	s, err := New("Bot token")
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	message := []byte(`{"op":0,"s":83,"t":"STAGE_INSTANCE_CREATE","d":{"id":"1","guild_id":"2","channel_id":"3","topic":"town hall","privacy_level":2}}`)
+	event, err := s.onEvent(websocket.TextMessage, message)
+	if err != nil {
+		t.Fatalf("onEvent returned error: %v", err)
+	}
+
+	stage, ok := event.Struct.(*StageInstanceEventCreate)
+	if !ok {
+		t.Fatalf("event.Struct = %T, want *StageInstanceEventCreate", event.Struct)
+	}
+	if stage.ID != "1" || stage.GuildID != "2" || stage.ChannelID != "3" {
+		t.Fatalf("stage instance IDs = %#v", stage.StageInstance)
+	}
+}

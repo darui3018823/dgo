@@ -73,6 +73,11 @@ type Session struct {
 	// e.g. false = launch event handlers in their own goroutines.
 	SyncEvents bool
 
+	// PanicHandler is called when an event handler panics. Event contains the
+	// value being dispatched and recovered contains the panic value. A nil
+	// PanicHandler logs the panic and keeps the event dispatcher running.
+	PanicHandler func(s *Session, event interface{}, recovered interface{})
+
 	// Exposed but should not be modified by User.
 
 	// Whether the Data Websocket is ready

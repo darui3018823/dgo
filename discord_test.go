@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -182,6 +183,77 @@ func TestRemoveHandler(t *testing.T) {
 	// testHandler will be called once, as it was removed in between calls.
 	if atomic.LoadInt32(&testHandlerCalled) != 1 {
 		t.Fatalf("testHandler was not called once.")
+	}
+}
+
+func TestSyncHandlerCanModifyHandlers(t *testing.T) {
+	d := &Session{SyncEvents: true}
+	done := make(chan struct{})
+
+	var remove func()
+	remove = d.AddHandler(func(s *Session, _ *MessageCreate) {
+		s.AddHandler(func(*Session, *MessageCreate) {})
+		remove()
+		close(done)
+	})
+
+	go d.handleEvent(messageCreateEventType, &MessageCreate{})
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("synchronous handler deadlocked while modifying handlers")
+	}
+}
+
+func TestOnceHandlerConsumedAtomically(t *testing.T) {
+	d := &Session{SyncEvents: true}
+	var called atomic.Int32
+	d.AddHandlerOnce(func(*Session, *MessageCreate) {
+		called.Add(1)
+	})
+
+	var events sync.WaitGroup
+	for range 32 {
+		events.Add(1)
+		go func() {
+			defer events.Done()
+			d.handleEvent(messageCreateEventType, &MessageCreate{})
+		}()
+	}
+	events.Wait()
+
+	if got := called.Load(); got != 1 {
+		t.Fatalf("once handler called %d times, want 1", got)
+	}
+}
+
+func TestHandlerPanicIsRecovered(t *testing.T) {
+	d := &Session{SyncEvents: true}
+	panicReported := false
+	secondHandlerCalled := false
+	d.PanicHandler = func(_ *Session, event interface{}, recovered interface{}) {
+		if _, ok := event.(*MessageCreate); !ok {
+			t.Errorf("panic event = %T, want *MessageCreate", event)
+		}
+		if recovered != "handler panic" {
+			t.Errorf("recovered = %v, want handler panic", recovered)
+		}
+		panicReported = true
+	}
+	d.AddHandler(func(*Session, *MessageCreate) {
+		panic("handler panic")
+	})
+	d.AddHandler(func(*Session, *MessageCreate) {
+		secondHandlerCalled = true
+	})
+
+	d.handleEvent(messageCreateEventType, &MessageCreate{})
+
+	if !panicReported {
+		t.Error("panic handler was not called")
+	}
+	if !secondHandlerCalled {
+		t.Error("dispatch stopped after a handler panic")
 	}
 }
 

@@ -614,13 +614,25 @@ func (v *VoiceConnection) onEvent(isBinary bool, message []byte) {
 		}
 		v.ssrcToUserID[uint32(voiceSpeakingUpdate.SSRC)] = voiceSpeakingUpdate.UserID
 		dave := v.dave
+		handlers := append([]VoiceSpeakingUpdateHandler(nil), v.voiceSpeakingUpdateHandlers...)
 		v.Unlock()
 		if dave != nil {
 			dave.SetSSRC(uint32(voiceSpeakingUpdate.SSRC), voiceSpeakingUpdate.UserID)
 		}
 
-		for _, h := range v.voiceSpeakingUpdateHandlers {
-			h(v, voiceSpeakingUpdate)
+		for _, h := range handlers {
+			func() {
+				defer func() {
+					if recovered := recover(); recovered != nil {
+						if v.session != nil {
+							v.session.reportHandlerPanic(voiceSpeakingUpdate, recovered)
+						} else {
+							v.log(LogError, "voice event handler panicked for %T: %v", voiceSpeakingUpdate, recovered)
+						}
+					}
+				}()
+				h(v, voiceSpeakingUpdate)
+			}()
 		}
 
 	case 12: // CLIENT CONNECT

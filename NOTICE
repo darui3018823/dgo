@@ -1,0 +1,10 @@
+dgo
+===
+
+dgo is a hard fork of bwmarrin/discordgo.
+
+The 2026 copyright notice for darui3018823 applies to original changes made
+for dgo. Earlier discordgo code and contributions retain their original
+copyrights and attribution.
+
+See LICENSE for the BSD 3-Clause license terms.

@@ -369,14 +369,23 @@ type helloOp struct {
 	HeartbeatInterval time.Duration `json:"heartbeat_interval"`
 }
 
-// FailedHeartbeatAcks is the number of heartbeat intervals to wait until forcing a connection restart.
-const FailedHeartbeatAcks = 5
+// FailedHeartbeatAcks is retained for compatibility. Discord requires clients
+// to restart the connection when one heartbeat remains unacknowledged at the
+// next interval.
+const FailedHeartbeatAcks = 1
 
 // HeartbeatLatency returns the latency between heartbeat acknowledgement and heartbeat send.
 func (s *Session) HeartbeatLatency() time.Duration {
+	s.RLock()
+	latency := s.LastHeartbeatAck.Sub(s.LastHeartbeatSent)
+	s.RUnlock()
+	return latency
+}
 
-	return s.LastHeartbeatAck.Sub(s.LastHeartbeatSent)
-
+// MissedHeartbeatAcks returns the cumulative number of Gateway reconnects
+// caused by a missing heartbeat acknowledgement.
+func (s *Session) MissedHeartbeatAcks() uint64 {
+	return atomic.LoadUint64(&s.missedHeartbeatAcks)
 }
 
 // heartbeat sends regular heartbeats to Discord so it knows the client
@@ -390,26 +399,43 @@ func (s *Session) heartbeat(wsConn *websocket.Conn, listening <-chan interface{}
 		return
 	}
 
+	interval := heartbeatInterval * time.Millisecond
+	initialTimer := time.NewTimer(heartbeatJitter(interval))
+	select {
+	case <-initialTimer.C:
+	case <-listening:
+		if !initialTimer.Stop() {
+			<-initialTimer.C
+		}
+		return
+	}
+
 	var err error
-	ticker := time.NewTicker(heartbeatInterval * time.Millisecond)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
 		s.RLock()
-		last := s.LastHeartbeatAck
+		lastAck := s.LastHeartbeatAck
+		lastSent := s.LastHeartbeatSent
 		s.RUnlock()
+		if heartbeatAckPending(lastAck, lastSent) {
+			atomic.AddUint64(&s.missedHeartbeatAcks, 1)
+			s.log(LogError, "previous gateway heartbeat was not acknowledged; reconnecting")
+			s.CloseWithCode(4000)
+			s.reconnect()
+			return
+		}
 		sequence := atomic.LoadInt64(s.sequence)
 		s.log(LogDebug, "sending gateway websocket heartbeat seq %d", sequence)
+		s.Lock()
 		s.wsMutex.Lock()
 		s.LastHeartbeatSent = time.Now().UTC()
 		err = wsConn.WriteJSON(heartbeatOp{1, sequence})
 		s.wsMutex.Unlock()
-		if err != nil || time.Now().UTC().Sub(last) > (heartbeatInterval*time.Millisecond*time.Duration(FailedHeartbeatAcks)) {
-			if err != nil {
-				s.log(LogError, "error sending heartbeat to gateway %s, %s", s.gateway, err)
-			} else {
-				s.log(LogError, "haven't gotten a heartbeat ACK in %v, triggering a reconnection", time.Now().UTC().Sub(last))
-			}
+		s.Unlock()
+		if err != nil {
+			s.log(LogError, "error sending heartbeat to gateway %s, %s", s.gateway, err)
 			s.CloseWithCode(4000)
 			s.reconnect()
 			return
@@ -425,6 +451,21 @@ func (s *Session) heartbeat(wsConn *websocket.Conn, listening <-chan interface{}
 			return
 		}
 	}
+}
+
+func heartbeatJitter(interval time.Duration) time.Duration {
+	if interval <= 0 {
+		return 0
+	}
+	jitter, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(interval)))
+	if err != nil {
+		return interval / 2
+	}
+	return time.Duration(jitter.Int64())
+}
+
+func heartbeatAckPending(lastAck, lastSent time.Time) bool {
+	return !lastSent.IsZero() && lastAck.Before(lastSent)
 }
 
 // UpdateStatusData is provided to UpdateStatusComplex()

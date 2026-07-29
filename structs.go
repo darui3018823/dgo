@@ -133,6 +133,10 @@ type Session struct {
 	// Stores the last Heartbeat sent (in UTC)
 	LastHeartbeatSent time.Time
 
+	// Number of Gateway connections restarted because the previous heartbeat
+	// was not acknowledged before the next interval.
+	missedHeartbeatAcks uint64
+
 	// used to deal with rate limits
 	Ratelimiter *RateLimiter
 

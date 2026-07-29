@@ -315,6 +315,54 @@ func TestGatewayCloseEventExposesTerminalFailure(t *testing.T) {
 	}
 }
 
+func TestHeartbeatRequiresAckBeforeNextSend(t *testing.T) {
+	sent := time.Unix(100, 0)
+	if heartbeatAckPending(time.Time{}, time.Time{}) {
+		t.Fatal("heartbeat was pending before the first send")
+	}
+	if !heartbeatAckPending(sent.Add(-time.Nanosecond), sent) {
+		t.Fatal("unacknowledged heartbeat was not detected")
+	}
+	if heartbeatAckPending(sent, sent) {
+		t.Fatal("equal acknowledgement time was treated as pending")
+	}
+	if heartbeatAckPending(sent.Add(time.Nanosecond), sent) {
+		t.Fatal("acknowledged heartbeat was treated as pending")
+	}
+	if FailedHeartbeatAcks != 1 {
+		t.Fatalf("FailedHeartbeatAcks = %d, want 1", FailedHeartbeatAcks)
+	}
+}
+
+func TestHeartbeatMetricsAndJitter(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := time.Unix(100, 0)
+	ack := sent.Add(25 * time.Millisecond)
+	session.Lock()
+	session.LastHeartbeatSent = sent
+	session.LastHeartbeatAck = ack
+	session.Unlock()
+	if latency := session.HeartbeatLatency(); latency != 25*time.Millisecond {
+		t.Fatalf("latency = %s, want 25ms", latency)
+	}
+	atomic.AddUint64(&session.missedHeartbeatAcks, 2)
+	if missed := session.MissedHeartbeatAcks(); missed != 2 {
+		t.Fatalf("missed ACKs = %d, want 2", missed)
+	}
+	for range 100 {
+		jitter := heartbeatJitter(45 * time.Second)
+		if jitter < 0 || jitter >= 45*time.Second {
+			t.Fatalf("jitter = %s, want [0s, 45s)", jitter)
+		}
+	}
+	if jitter := heartbeatJitter(0); jitter != 0 {
+		t.Fatalf("zero interval jitter = %s", jitter)
+	}
+}
+
 func TestNormalCloseInvalidatesResumeState(t *testing.T) {
 	session, err := New("Bot token")
 	if err != nil {

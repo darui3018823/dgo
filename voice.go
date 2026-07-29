@@ -69,8 +69,6 @@ type VoiceConnection struct {
 
 	ssrcToUserID map[uint32]string
 
-	pendingReWelcome bool
-
 	seqAck int
 
 	LastHeartbeatSent time.Time
@@ -80,6 +78,8 @@ type VoiceConnection struct {
 
 	lastHeartbeatNonce int64
 	awaitingHeartbeat  bool
+	lastDAVESequence   uint16
+	hasDAVESequence    bool
 
 	op4 voiceOP4
 	op2 voiceOP2
@@ -258,6 +258,8 @@ func (v *VoiceConnection) Close() {
 	v.Ready = false
 	v.speaking = false
 	v.dave = nil
+	v.hasDAVESequence = false
+	v.lastDAVESequence = 0
 	closeChannel := v.close
 	v.close = nil
 	udpConn := v.udpConn
@@ -739,16 +741,28 @@ func (v *VoiceConnection) onEvent(isBinary bool, message []byte) {
 		var daveKPData []byte
 		v.log(LogInformational, "DAVE protocol version %d", v.op4.DAVEProtocolVersion)
 		if v.op4.DAVEProtocolVersion > 0 {
-			v.dave = NewDAVESession(v.UserID)
+			dave := NewDAVESession(v.UserID)
+			if err := dave.Configure(
+				v.ChannelID,
+				v.op4.DAVEProtocolVersion,
+				v.ConnectedUsers,
+			); err != nil {
+				v.Unlock()
+				v.log(LogError, "DAVE MLS initialization failed: %s", err)
+				return
+			}
 			for ssrc, userID := range v.ssrcToUserID {
-				v.dave.SetSSRC(ssrc, userID)
+				dave.SetSSRC(ssrc, userID)
 			}
 
 			var err error
-			daveKPData, err = v.dave.GenerateKeyPackage()
+			daveKPData, err = dave.GenerateKeyPackage()
 			if err != nil {
+				v.Unlock()
 				v.log(LogError, "DAVE key package generation failed: %s", err)
+				return
 			}
+			v.dave = dave
 		}
 
 		if v.OpusSend == nil {
@@ -814,8 +828,13 @@ func (v *VoiceConnection) onEvent(isBinary bool, message []byte) {
 		}
 		v.Lock()
 		v.ConnectedUsers = append(v.ConnectedUsers[:0], clients.UserIDs...)
+		connectedUsers := append([]string(nil), v.ConnectedUsers...)
+		dave := v.dave
 		handlers := append([]VoiceClientsConnectHandler(nil), v.voiceClientsConnectHandlers...)
 		v.Unlock()
+		if dave != nil {
+			dave.SetRecognizedUsers(connectedUsers)
+		}
 		for _, handler := range handlers {
 			func() {
 				defer func() {
@@ -833,7 +852,28 @@ func (v *VoiceConnection) onEvent(isBinary bool, message []byte) {
 		return
 
 	case 13: // Client Disconnect
-		v.log(LogDebug, "user disconnected: %s", redactJSON(e.RawData))
+		var disconnected struct {
+			UserID string `json:"user_id"`
+		}
+		if err := json.Unmarshal(e.RawData, &disconnected); err != nil {
+			v.log(LogError, "OP13 unmarshal error, %s", err)
+			return
+		}
+		v.Lock()
+		users := v.ConnectedUsers[:0]
+		for _, userID := range v.ConnectedUsers {
+			if userID != disconnected.UserID {
+				users = append(users, userID)
+			}
+		}
+		v.ConnectedUsers = users
+		connectedUsers := append([]string(nil), users...)
+		dave := v.dave
+		v.Unlock()
+		if dave != nil {
+			dave.SetRecognizedUsers(connectedUsers)
+		}
+		v.log(LogDebug, "user disconnected from voice")
 		return
 
 	case 21: // DAVE prepare_transition
@@ -1420,6 +1460,21 @@ func (v *VoiceConnection) handleDAVEBinary(message []byte) {
 		return
 	}
 
+	sequence := binary.BigEndian.Uint16(message[:2])
+	v.Lock()
+	if v.hasDAVESequence {
+		delta := sequence - v.lastDAVESequence
+		if delta == 0 || delta > 1<<15 {
+			v.Unlock()
+			v.log(LogWarning, "dropping replayed or out-of-order DAVE binary sequence")
+			return
+		}
+	}
+	v.lastDAVESequence = sequence
+	v.hasDAVESequence = true
+	v.seqAck = int(sequence)
+	v.Unlock()
+
 	opcode := message[2]
 	payload := message[3:]
 	v.log(LogDebug, "DAVE binary opcode=%d len=%d", opcode, len(payload))
@@ -1436,15 +1491,29 @@ func (v *VoiceConnection) handleDAVEBinary(message []byte) {
 		}
 
 	case 27:
-		v.log(LogDebug, "DAVE proposals (%d bytes), ignoring", len(payload))
+		v.RLock()
+		dave := v.dave
+		v.RUnlock()
+		if dave == nil {
+			return
+		}
+		commitWelcome, err := dave.HandleProposals(payload)
+		if err != nil {
+			v.log(LogError, "DAVE proposal processing failed: %s", err)
+			return
+		}
+		if len(commitWelcome) > 0 {
+			v.sendDAVECommitWelcomeBinary(commitWelcome)
+		}
 
 	case 29:
-		if len(payload) < 2 {
+		if len(payload) <= 2 {
 			v.log(LogWarning, "DAVE commit payload too short")
 			return
 		}
 		transitionID := binary.BigEndian.Uint16(payload[0:2])
-		v.log(LogInformational, "DAVE commit transition_id=%d, requesting re-Welcome", transitionID)
+		commit := payload[2:]
+		v.log(LogInformational, "DAVE commit transition_id=%d", transitionID)
 
 		v.RLock()
 		dave := v.dave
@@ -1453,21 +1522,20 @@ func (v *VoiceConnection) handleDAVEBinary(message []byte) {
 			return
 		}
 
-		v.sendDAVEInvalidCommitWelcome(transitionID)
-
-		kpData, err := dave.ResetForReWelcome()
-		if err != nil {
-			v.log(LogError, "DAVE reset for re-Welcome failed: %s", err)
+		if err := dave.HandleCommit(commit); err != nil {
+			v.log(LogError, "DAVE commit processing failed: %s", err)
+			v.recoverDAVEGroup(transitionID, dave)
 			return
 		}
-		v.sendDAVEKeyPackageBinary(kpData)
-
-		v.Lock()
-		v.pendingReWelcome = true
-		v.Unlock()
+		if err := dave.HandlePrepareTransition(transitionID, 1); err != nil {
+			v.log(LogError, "DAVE commit transition preparation failed: %s", err)
+			v.recoverDAVEGroup(transitionID, dave)
+			return
+		}
+		v.sendDAVEReadyForTransition(transitionID)
 
 	case 30:
-		if len(payload) < 2 {
+		if len(payload) <= 2 {
 			v.log(LogWarning, "DAVE welcome payload too short")
 			return
 		}
@@ -1485,17 +1553,16 @@ func (v *VoiceConnection) handleDAVEBinary(message []byte) {
 
 		if err := dave.HandleWelcome(welcomeData); err != nil {
 			v.log(LogError, "DAVE welcome processing failed: %s", err)
+			v.recoverDAVEGroup(transitionID, dave)
 			return
 		}
 
-		if err := dave.DeriveSenderKey(); err != nil {
-			v.log(LogError, "DAVE sender key derivation failed: %s", err)
+		if err := dave.HandlePrepareTransition(transitionID, 1); err != nil {
+			v.log(LogError, "DAVE welcome transition preparation failed: %s", err)
+			v.recoverDAVEGroup(transitionID, dave)
 			return
 		}
-
-		dave.HandlePrepareTransition(transitionID, 1)
 		v.log(LogInformational, "DAVE encryption prepared after Welcome")
-
 		v.sendDAVEReadyForTransition(transitionID)
 
 	default:
@@ -1519,7 +1586,17 @@ func (v *VoiceConnection) handleDAVEPrepareTransition(data json.RawMessage) {
 	dave := v.dave
 	v.RUnlock()
 	if dave != nil {
-		dave.HandlePrepareTransition(msg.TransitionID, msg.DAVEProtocolVersion)
+		if err := dave.HandlePrepareTransition(msg.TransitionID, msg.DAVEProtocolVersion); err != nil {
+			v.log(LogError, "DAVE prepare_transition failed: %s", err)
+			return
+		}
+		if msg.TransitionID == 0 {
+			if err := dave.HandleExecuteTransition(0); err != nil {
+				v.log(LogError, "DAVE immediate transition failed: %s", err)
+			}
+			return
+		}
+		v.sendDAVEReadyForTransition(msg.TransitionID)
 	}
 }
 
@@ -1541,15 +1618,6 @@ func (v *VoiceConnection) handleDAVEExecuteTransition(data json.RawMessage) {
 			return
 		}
 		v.log(LogInformational, "DAVE execute_transition id=%d canEncrypt=%v", msg.TransitionID, dave.CanEncrypt())
-
-		v.Lock()
-		pending := v.pendingReWelcome
-		v.pendingReWelcome = false
-		v.Unlock()
-
-		if !pending {
-			v.sendDAVEReadyForTransition(msg.TransitionID)
-		}
 	}
 }
 
@@ -1578,7 +1646,9 @@ func (v *VoiceConnection) handleDAVEPrepareEpoch(data json.RawMessage) {
 		return
 	}
 
-	v.sendDAVEKeyPackageBinary(kpData)
+	if len(kpData) > 0 {
+		v.sendDAVEKeyPackageBinary(kpData)
+	}
 }
 
 func (v *VoiceConnection) RekeyDAVE() {
@@ -1607,6 +1677,27 @@ func (v *VoiceConnection) sendDAVEKeyPackageBinary(kpData []byte) {
 	if _, err := v.writeVoiceMessage(websocket.BinaryMessage, binMsg); err != nil && !errors.Is(err, ErrVoiceConnectionClosed) {
 		v.log(LogError, "DAVE key package send failed: %s", err)
 	}
+}
+
+func (v *VoiceConnection) sendDAVECommitWelcomeBinary(data []byte) {
+	v.log(LogInformational, "DAVE sending commit/welcome (%d bytes)", len(data))
+	message := make([]byte, 1+len(data))
+	message[0] = 28
+	copy(message[1:], data)
+	if _, err := v.writeVoiceMessage(websocket.BinaryMessage, message); err != nil &&
+		!errors.Is(err, ErrVoiceConnectionClosed) {
+		v.log(LogError, "DAVE commit/welcome send failed: %s", err)
+	}
+}
+
+func (v *VoiceConnection) recoverDAVEGroup(transitionID uint16, dave *DAVESession) {
+	v.sendDAVEInvalidCommitWelcome(transitionID)
+	keyPackage, err := dave.ResetForReWelcome()
+	if err != nil {
+		v.log(LogError, "DAVE reset for re-Welcome failed: %s", err)
+		return
+	}
+	v.sendDAVEKeyPackageBinary(keyPackage)
 }
 
 func (v *VoiceConnection) sendDAVEReadyForTransition(transitionID uint16) {

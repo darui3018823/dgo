@@ -26,7 +26,8 @@ func TestInteractionCurrentContextFields(t *testing.T) {
 			"guild_id":"guild",
 			"name":"commands",
 			"type":0,
-			"permissions":"3072"
+			"permissions":"3072",
+			"app_permissions":"1024"
 		},
 		"channel_id":"channel",
 		"token":"secret",
@@ -45,7 +46,8 @@ func TestInteractionCurrentContextFields(t *testing.T) {
 	}
 	if interaction.Channel == nil ||
 		interaction.Channel.ID != "channel" ||
-		interaction.Channel.Permissions != 3072 {
+		interaction.Channel.Permissions != 3072 ||
+		interaction.Channel.AppPermissions != 1024 {
 		t.Fatalf("unexpected partial channel: %#v", interaction.Channel)
 	}
 	if interaction.AttachmentSizeLimit != 26214400 {
@@ -53,6 +55,23 @@ func TestInteractionCurrentContextFields(t *testing.T) {
 	}
 	if interaction.AuthorizingIntegrationOwners[ApplicationIntegrationGuildInstall] != "guild" {
 		t.Fatalf("unexpected authorizing owners: %#v", interaction.AuthorizingIntegrationOwners)
+	}
+}
+
+func TestPingInteractionAllowsMissingData(t *testing.T) {
+	var interaction Interaction
+	if err := json.Unmarshal([]byte(`{
+		"id":"ping",
+		"application_id":"app",
+		"type":1,
+		"token":"secret",
+		"version":1,
+		"attachment_size_limit":10485760
+	}`), &interaction); err != nil {
+		t.Fatal(err)
+	}
+	if interaction.Type != InteractionPing || interaction.Data != nil {
+		t.Fatalf("unexpected ping interaction: %#v", interaction)
 	}
 }
 

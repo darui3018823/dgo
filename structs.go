@@ -441,6 +441,9 @@ type Channel struct {
 	// The permissions available in this channel when it is embedded in an interaction.
 	Permissions int64 `json:"permissions,string"`
 
+	// The app's permissions in this channel when it is embedded in an interaction.
+	AppPermissions int64 `json:"app_permissions,string"`
+
 	// The ID of the last message sent in the channel. This is not
 	// guaranteed to be an ID of a valid message.
 	LastMessageID string `json:"last_message_id"`

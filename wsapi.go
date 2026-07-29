@@ -994,16 +994,18 @@ func (s *Session) ChannelVoiceJoin(gID, cID string, mute, deaf bool) (voice *Voi
 
 	s.log(LogInformational, "called")
 
-	s.RLock()
+	var created bool
+	s.Lock()
+	if s.VoiceConnections == nil {
+		s.VoiceConnections = make(map[string]*VoiceConnection)
+	}
 	voice = s.VoiceConnections[gID]
-	s.RUnlock()
-
 	if voice == nil {
 		voice = &VoiceConnection{}
-		s.Lock()
 		s.VoiceConnections[gID] = voice
-		s.Unlock()
+		created = true
 	}
+	s.Unlock()
 
 	voice.Lock()
 	voice.GuildID = gID
@@ -1015,6 +1017,13 @@ func (s *Session) ChannelVoiceJoin(gID, cID string, mute, deaf bool) (voice *Voi
 
 	err = s.ChannelVoiceJoinManual(gID, cID, mute, deaf)
 	if err != nil {
+		if created {
+			s.Lock()
+			if s.VoiceConnections[gID] == voice {
+				delete(s.VoiceConnections, gID)
+			}
+			s.Unlock()
+		}
 		return
 	}
 
@@ -1040,6 +1049,9 @@ func (s *Session) ChannelVoiceJoin(gID, cID string, mute, deaf bool) (voice *Voi
 func (s *Session) ChannelVoiceJoinManual(gID, cID string, mute, deaf bool) (err error) {
 
 	s.log(LogInformational, "called")
+	if gID == "" {
+		return errors.New("guild ID is required")
+	}
 
 	var channelID *string
 	if cID == "" {
@@ -1050,10 +1062,7 @@ func (s *Session) ChannelVoiceJoinManual(gID, cID string, mute, deaf bool) (err 
 
 	// Send the request to Discord that we want to join the voice channel
 	data := voiceChannelJoinOp{4, voiceChannelJoinData{&gID, channelID, mute, deaf}}
-	s.wsMutex.Lock()
-	err = s.wsConn.WriteJSON(data)
-	s.wsMutex.Unlock()
-	return
+	return s.GatewayWriteStruct(data)
 }
 
 // onVoiceStateUpdate handles Voice State Update events on the data websocket.
@@ -1072,8 +1081,18 @@ func (s *Session) onVoiceStateUpdate(st *VoiceStateUpdate) {
 		return
 	}
 
+	s.RLock()
+	state := s.State
+	s.RUnlock()
+	if state == nil {
+		return
+	}
+	state.RLock()
+	currentUser := state.User
+	state.RUnlock()
+
 	// We only care about events that are about us.
-	if s.State.User.ID != st.UserID {
+	if currentUser == nil || currentUser.ID != st.UserID {
 		return
 	}
 

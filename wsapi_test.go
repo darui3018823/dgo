@@ -339,6 +339,65 @@ func TestNormalCloseInvalidatesResumeState(t *testing.T) {
 	}
 }
 
+func TestChannelVoiceJoinBeforeGatewayIsSafe(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.VoiceConnections = nil
+
+	if err = session.ChannelVoiceJoinManual("", "channel", false, false); err == nil {
+		t.Fatal("accepted an empty guild ID")
+	}
+	if err = session.ChannelVoiceJoinManual("guild", "channel", false, false); !errors.Is(err, ErrWSNotFound) {
+		t.Fatalf("manual voice join error = %v, want ErrWSNotFound", err)
+	}
+	voice, err := session.ChannelVoiceJoin("guild", "channel", false, false)
+	if !errors.Is(err, ErrWSNotFound) {
+		t.Fatalf("voice join error = %v, want ErrWSNotFound", err)
+	}
+	if voice == nil {
+		t.Fatal("voice join returned a nil connection")
+	}
+	session.RLock()
+	_, retained := session.VoiceConnections["guild"]
+	session.RUnlock()
+	if retained {
+		t.Fatal("failed voice join left a stale connection in the session")
+	}
+}
+
+func TestVoiceStateUpdateToleratesMissingStateUser(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	voice := &VoiceConnection{}
+	session.VoiceConnections = map[string]*VoiceConnection{"guild": voice}
+
+	session.State = nil
+	session.onVoiceStateUpdate(&VoiceStateUpdate{VoiceState: &VoiceState{
+		GuildID:   "guild",
+		ChannelID: "channel",
+		UserID:    "user",
+		SessionID: "voice-session",
+	}})
+	session.State = NewState()
+	session.onVoiceStateUpdate(&VoiceStateUpdate{VoiceState: &VoiceState{
+		GuildID:   "guild",
+		ChannelID: "channel",
+		UserID:    "user",
+		SessionID: "voice-session",
+	}})
+
+	voice.RLock()
+	sessionID := voice.sessionID
+	voice.RUnlock()
+	if sessionID != "" {
+		t.Fatalf("voice state without current user changed session ID to %q", sessionID)
+	}
+}
+
 func TestRequestGuildMembersValidation(t *testing.T) {
 	session, err := New("Bot token")
 	if err != nil {

@@ -152,14 +152,25 @@ func TestOnEventLogsZlibError(t *testing.T) {
 }
 
 func TestOpenRejectsNonBotCredentials(t *testing.T) {
-	tests := []string{
-		"",
+	for _, token := range []string{
 		"raw-user-token",
-		"Bearer oauth-token",
 		"Bot ",
+	} {
+		t.Run(token, func(t *testing.T) {
+			s, err := New(token)
+			if !errors.Is(err, ErrInvalidSessionToken) {
+				t.Fatalf("New() error = %v, want %v", err, ErrInvalidSessionToken)
+			}
+			if s != nil {
+				t.Fatalf("New() session = %#v, want nil", s)
+			}
+		})
 	}
 
-	for _, token := range tests {
+	for _, token := range []string{
+		"",
+		"Bearer oauth-token",
+	} {
 		t.Run(token, func(t *testing.T) {
 			s, err := New(token)
 			if err != nil {

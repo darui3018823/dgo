@@ -16,7 +16,7 @@ func ExampleApplication() {
 	}
 
 	// Create a new dgo session
-	dg, err := dgo.New(Token)
+	dg, err := dgo.NewOAuth2(Token)
 	if err != nil {
 		log.Println(err)
 		return

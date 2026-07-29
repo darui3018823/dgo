@@ -1,6 +1,7 @@
 package dgo
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -27,7 +28,7 @@ var (
 func TestMain(m *testing.M) {
 	fmt.Println("Init is being called.")
 	if envBotToken != "" {
-		if d, err := New(envBotToken); err == nil {
+		if d, err := NewBot(envBotToken); err == nil {
 			dgBot = d
 		}
 	}
@@ -37,7 +38,7 @@ func TestMain(m *testing.M) {
 	}
 
 	if envOAuth2Token != "" {
-		if d, err := New(envOAuth2Token); err == nil {
+		if d, err := NewOAuth2(envOAuth2Token); err == nil {
 			dg = d
 		}
 	}
@@ -55,7 +56,7 @@ func TestNewToken(t *testing.T) {
 		t.Skip("Skipping New(token), DGU_TOKEN not set")
 	}
 
-	d, err := New(envOAuth2Token)
+	d, err := NewOAuth2(envOAuth2Token)
 	if err != nil {
 		t.Fatalf("New(envToken) returned error: %+v", err)
 	}
@@ -79,6 +80,64 @@ func TestNewUsesMinimalIntents(t *testing.T) {
 	}
 }
 
+func TestNewRejectsRawOrMalformedCredentials(t *testing.T) {
+	for _, token := range []string{
+		"raw-user-token",
+		"Bot ",
+		"Bot token with spaces",
+		"Bearer ",
+		"Bearer token\n",
+		" bot-token",
+	} {
+		t.Run(token, func(t *testing.T) {
+			session, err := New(token)
+			if !errors.Is(err, ErrInvalidSessionToken) {
+				t.Fatalf("New(%q) error = %v, want %v", token, err, ErrInvalidSessionToken)
+			}
+			if session != nil {
+				t.Fatalf("New(%q) session = %#v, want nil", token, session)
+			}
+		})
+	}
+}
+
+func TestCredentialConstructors(t *testing.T) {
+	tests := []struct {
+		name string
+		new  func(string) (*Session, error)
+		raw  string
+		want string
+	}{
+		{name: "bot", new: NewBot, raw: "bot-token", want: "Bot bot-token"},
+		{name: "oauth2", new: NewOAuth2, raw: "oauth-token", want: "Bearer oauth-token"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			session, err := test.new(test.raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if session.Token != test.want || session.Identify.Token != test.want {
+				t.Fatalf(
+					"tokens = (%q, %q), want %q",
+					session.Token,
+					session.Identify.Token,
+					test.want,
+				)
+			}
+		})
+	}
+
+	for _, constructor := range []func(string) (*Session, error){NewBot, NewOAuth2} {
+		for _, token := range []string{"", " prefixed", "Bot token", "token\n"} {
+			if session, err := constructor(token); !errors.Is(err, ErrInvalidSessionToken) || session != nil {
+				t.Fatalf("constructor(%q) = (%#v, %v), want (nil, %v)", token, session, err, ErrInvalidSessionToken)
+			}
+		}
+	}
+}
+
 func TestIntentAggregatesIncludePolls(t *testing.T) {
 	polls := IntentGuildMessagePolls | IntentDirectMessagePolls
 	if IntentsAllWithoutPrivileged&polls != polls {
@@ -94,7 +153,7 @@ func TestOpenClose(t *testing.T) {
 		t.Skip("Skipping TestClose, DGU_TOKEN not set")
 	}
 
-	d, err := New(envOAuth2Token)
+	d, err := NewOAuth2(envOAuth2Token)
 	if err != nil {
 		t.Fatalf("TestClose, New(envToken) returned error: %+v", err)
 	}

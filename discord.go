@@ -14,13 +14,19 @@
 package dgo
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+// ErrInvalidSessionToken is returned when a session credential is empty,
+// malformed, or does not use an explicitly supported authorization scheme.
+var ErrInvalidSessionToken = errors.New("invalid session token")
 
 // New creates a new Discord session with provided token.
 // If the token is for a bot, it must be prefixed with "Bot "
@@ -31,10 +37,53 @@ import (
 //
 //	e.g. "Bearer ..."
 func New(token string) (s *Session, err error) {
+	if token != "" {
+		switch {
+		case strings.HasPrefix(token, "Bot "):
+			if !validRawCredential(strings.TrimPrefix(token, "Bot ")) {
+				return nil, ErrInvalidSessionToken
+			}
+		case strings.HasPrefix(token, "Bearer "):
+			if !validRawCredential(strings.TrimPrefix(token, "Bearer ")) {
+				return nil, ErrInvalidSessionToken
+			}
+		default:
+			return nil, ErrInvalidSessionToken
+		}
+	}
+
+	return newSession(token), nil
+}
+
+// NewBot creates a session from a raw bot token. It adds the required Bot
+// authorization scheme so callers cannot accidentally construct a user-token
+// session.
+func NewBot(token string) (*Session, error) {
+	if !validRawCredential(token) {
+		return nil, ErrInvalidSessionToken
+	}
+	return newSession("Bot " + token), nil
+}
+
+// NewOAuth2 creates a REST session from a raw OAuth2 bearer token.
+func NewOAuth2(token string) (*Session, error) {
+	if !validRawCredential(token) {
+		return nil, ErrInvalidSessionToken
+	}
+	return newSession("Bearer " + token), nil
+}
+
+func validRawCredential(token string) bool {
+	return token != "" &&
+		token == strings.TrimSpace(token) &&
+		!strings.ContainsAny(token, " \t\r\n")
+}
+
+func newSession(token string) *Session {
 	versionLabel := formattedVersion(VERSION)
 
 	// Create an empty Session interface.
-	s = &Session{
+	s := &Session{
 		State:                              NewState(),
 		Ratelimiter:                        NewRatelimiter(),
 		StateEnabled:                       true,
@@ -67,5 +116,5 @@ func New(token string) (s *Session, err error) {
 	s.Identify.Token = token
 	s.Token = token
 
-	return
+	return s
 }

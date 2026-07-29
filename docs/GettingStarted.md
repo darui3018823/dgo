@@ -44,7 +44,7 @@ func main() {
 		log.Fatal("DISCORD_BOT_TOKEN is required")
 	}
 
-	session, err := dgo.New("Bot " + token)
+	session, err := dgo.NewBot(token)
 	if err != nil {
 		log.Fatal(err)
 	}

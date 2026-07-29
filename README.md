@@ -32,7 +32,7 @@ import "github.com/darui3018823/dgo"
 Create a bot session with an explicitly prefixed bot token:
 
 ```go
-session, err := dgo.New("Bot " + token)
+session, err := dgo.NewBot(token)
 if err != nil {
 	return err
 }

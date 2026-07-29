@@ -100,6 +100,60 @@ type User struct {
 	// The flags on a user's account.
 	// Only available when the request is authorized via a Bearer token.
 	Flags int `json:"flags"`
+
+	// Data for the user's avatar decoration, if one is equipped.
+	AvatarDecorationData *AvatarDecorationData `json:"avatar_decoration_data"`
+
+	// The user's collectible profile cosmetics, excluding avatar decorations.
+	Collectibles *Collectibles `json:"collectibles"`
+
+	// The guild identity the user displays on their profile.
+	PrimaryGuild *UserPrimaryGuild `json:"primary_guild"`
+}
+
+// AvatarDecorationData describes an avatar decoration equipped by a user or guild member.
+type AvatarDecorationData struct {
+	Asset string `json:"asset"`
+	SKUID string `json:"sku_id"`
+}
+
+// Collectibles contains the collectible profile cosmetics equipped by a user.
+type Collectibles struct {
+	Nameplate *Nameplate `json:"nameplate,omitempty"`
+}
+
+// Nameplate describes a collectible nameplate equipped by a user.
+type Nameplate struct {
+	SKUID   string           `json:"sku_id"`
+	Asset   string           `json:"asset"`
+	Label   string           `json:"label"`
+	Palette NameplatePalette `json:"palette"`
+}
+
+// NameplatePalette identifies a nameplate's background color palette.
+type NameplatePalette string
+
+// Known nameplate palettes.
+const (
+	NameplatePaletteCrimson   NameplatePalette = "crimson"
+	NameplatePaletteBerry     NameplatePalette = "berry"
+	NameplatePaletteSky       NameplatePalette = "sky"
+	NameplatePaletteTeal      NameplatePalette = "teal"
+	NameplatePaletteForest    NameplatePalette = "forest"
+	NameplatePaletteBubbleGum NameplatePalette = "bubble_gum"
+	NameplatePaletteViolet    NameplatePalette = "violet"
+	NameplatePaletteCobalt    NameplatePalette = "cobalt"
+	NameplatePaletteClover    NameplatePalette = "clover"
+	NameplatePaletteLemon     NameplatePalette = "lemon"
+	NameplatePaletteWhite     NameplatePalette = "white"
+)
+
+// UserPrimaryGuild describes the guild identity displayed on a user's profile.
+type UserPrimaryGuild struct {
+	IdentityGuildID *string `json:"identity_guild_id"`
+	IdentityEnabled *bool   `json:"identity_enabled"`
+	Tag             *string `json:"tag"`
+	Badge           *string `json:"badge"`
 }
 
 // String returns a unique identifier of the form username#discriminator

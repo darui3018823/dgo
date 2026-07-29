@@ -1678,6 +1678,12 @@ type Member struct {
 	// The hash of the banner for the guild member, if any.
 	Banner string `json:"banner"`
 
+	// Data for the member's guild avatar decoration, if one is equipped.
+	AvatarDecorationData *AvatarDecorationData `json:"avatar_decoration_data"`
+
+	// The member's collectible profile cosmetics.
+	Collectibles *Collectibles `json:"collectibles"`
+
 	// The underlying user on which the member is based.
 	User *User `json:"user"`
 

@@ -55,6 +55,14 @@ func redactJSONValue(value interface{}) interface{} {
 	case map[string]interface{}:
 		for key, item := range value {
 			if isSensitiveLogKey(key) {
+				// Discord API error codes are numeric and safe to retain. String
+				// authorization codes remain sensitive and are redacted.
+				if strings.EqualFold(key, "code") {
+					if _, isString := item.(string); !isString {
+						value[key] = redactJSONValue(item)
+						continue
+					}
+				}
 				value[key] = redactedValue
 			} else {
 				value[key] = redactJSONValue(item)

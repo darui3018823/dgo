@@ -46,6 +46,7 @@ var (
 	ErrGuildIntegrationMutationUnsupported = errors.New("creating and editing guild integrations is no longer supported by Discord's public API")
 	ErrCommandPermissionsBatchUnsupported  = errors.New("batch application command permission edits are disabled; edit commands individually")
 	ErrOAuthApplicationCRUDUnsupported     = errors.New("OAuth2 application CRUD routes are not part of Discord's public bot API; use CurrentApplication or CurrentApplicationEdit")
+	ErrRESTResponseTooLarge                = errors.New("REST response body exceeds configured limit")
 )
 
 var (
@@ -64,19 +65,29 @@ type RESTError struct {
 	ResponseBody []byte
 
 	Message *APIErrorMessage // Message may be nil.
+
+	cause error
 }
 
 // newRestError returns a new REST API error.
 func newRestError(req *http.Request, resp *http.Response, body []byte) *RESTError {
+	return newRestErrorWithCause(req, resp, body, nil)
+}
+
+func newRestErrorWithCause(req *http.Request, resp *http.Response, body []byte, cause error) *RESTError {
+	safeBody := []byte(redactJSON(body))
+	safeRequest := sanitizeHTTPRequest(req)
+	safeResponse := sanitizeHTTPResponse(resp, safeRequest, safeBody)
 	restErr := &RESTError{
-		Request:      req,
-		Response:     resp,
-		ResponseBody: body,
+		Request:      safeRequest,
+		Response:     safeResponse,
+		ResponseBody: safeBody,
+		cause:        cause,
 	}
 
 	// Attempt to decode the error and assume no message was provided if it fails
 	var msg *APIErrorMessage
-	err := Unmarshal(body, &msg)
+	err := Unmarshal(safeBody, &msg)
 	if err == nil {
 		restErr.Message = msg
 	}
@@ -87,6 +98,26 @@ func newRestError(req *http.Request, resp *http.Response, body []byte) *RESTErro
 // Error returns a Rest API Error with its status code and body.
 func (r RESTError) Error() string {
 	return "HTTP " + r.Response.Status + ", " + string(r.ResponseBody)
+}
+
+// Unwrap exposes a typed cause such as ErrUnauthorized.
+func (r RESTError) Unwrap() error {
+	return r.cause
+}
+
+// RESTResponseTooLargeError reports a bounded response body violation.
+type RESTResponseTooLargeError struct {
+	Limit int64
+}
+
+// Error implements error.
+func (e RESTResponseTooLargeError) Error() string {
+	return fmt.Sprintf("%s (%d bytes)", ErrRESTResponseTooLarge, e.Limit)
+}
+
+// Unwrap makes errors.Is work with ErrRESTResponseTooLarge.
+func (e RESTResponseTooLargeError) Unwrap() error {
+	return ErrRESTResponseTooLarge
 }
 
 // RateLimitError is returned when a request exceeds a rate limit
@@ -106,6 +137,10 @@ type RequestConfig struct {
 	Request                *http.Request
 	ShouldRetryOnRateLimit bool
 	MaxRestRetries         int
+	MaxResponseSize        int64
+	MaxRateLimitWait       time.Duration
+	MaxRetryWait           time.Duration
+	RetryUnsafeMethods     bool
 	Client                 *http.Client
 }
 
@@ -114,6 +149,9 @@ func newRequestConfig(s *Session, req *http.Request) *RequestConfig {
 	return &RequestConfig{
 		ShouldRetryOnRateLimit: s.ShouldRetryOnRateLimit,
 		MaxRestRetries:         s.MaxRestRetries,
+		MaxResponseSize:        s.MaxRestResponseSize,
+		MaxRateLimitWait:       s.MaxRestRateLimitWait,
+		MaxRetryWait:           s.MaxRestRetryWait,
 		Client:                 s.Client,
 		Request:                req,
 	}
@@ -143,6 +181,35 @@ func WithRetryOnRatelimit(retry bool) RequestOption {
 func WithRestRetries(max int) RequestOption {
 	return func(cfg *RequestConfig) {
 		cfg.MaxRestRetries = max
+	}
+}
+
+// WithRestResponseLimit changes the maximum response body size for a request.
+func WithRestResponseLimit(maxBytes int64) RequestOption {
+	return func(cfg *RequestConfig) {
+		cfg.MaxResponseSize = maxBytes
+	}
+}
+
+// WithRestRateLimitWait changes the maximum accepted wait from one 429 response.
+func WithRestRateLimitWait(max time.Duration) RequestOption {
+	return func(cfg *RequestConfig) {
+		cfg.MaxRateLimitWait = max
+	}
+}
+
+// WithRestRetryWait changes the maximum cumulative retry wait for a request.
+func WithRestRetryWait(max time.Duration) RequestOption {
+	return func(cfg *RequestConfig) {
+		cfg.MaxRetryWait = max
+	}
+}
+
+// WithUnsafeRestRetries allows transient response and network retries for
+// non-idempotent HTTP methods such as POST and PATCH.
+func WithUnsafeRestRetries(retry bool) RequestOption {
+	return func(cfg *RequestConfig) {
+		cfg.RetryUnsafeMethods = retry
 	}
 }
 
@@ -188,44 +255,54 @@ func (s *Session) RequestWithBucketID(method, urlStr string, data interface{}, b
 	return s.RequestRaw(method, urlStr, "application/json", body, bucketID, 0, options...)
 }
 
-// RequestRaw makes a (GET/POST/...) Requests to Discord REST API.
+// RequestRaw makes a (GET/POST/...) request to the Discord REST API.
 // Preferably use the other Request* methods but this lets you send JSON directly if that's what you have.
-// Sequence is the sequence number, if it fails with a 502 it will
-// retry with sequence+1 until it either succeeds or sequence >= session.MaxRestRetries
+// Sequence is the number of retries already consumed.
 func (s *Session) RequestRaw(method, urlStr, contentType string, b []byte, bucketID string, sequence int, options ...RequestOption) (response []byte, err error) {
+	cfg, err := s.prepareRESTRequest(method, urlStr, contentType, b, options...)
+	if err != nil {
+		return nil, err
+	}
+	if sequence < 0 {
+		return nil, fmt.Errorf("REST retry sequence cannot be negative")
+	}
 	if bucketID == "" {
 		bucketID = strings.SplitN(urlStr, "?", 2)[0]
 	}
-
-	// Create a dummy request to extract context from options
-	req, _ := http.NewRequest(method, urlStr, nil)
-	cfg := newRequestConfig(s, req)
-	for _, opt := range options {
-		opt(cfg)
+	if s.Ratelimiter == nil {
+		return nil, fmt.Errorf("REST rate limiter is nil")
 	}
-	ctx := cfg.Request.Context()
 
-	bucket, err := s.Ratelimiter.LockBucketContext(ctx, bucketID)
+	bucket, err := s.Ratelimiter.LockBucketContext(cfg.Request.Context(), bucketID)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.RequestWithLockedBucket(method, urlStr, contentType, b, bucket, sequence, options...)
+	return s.requestWithLockedBucket(cfg, contentType, b, bucket, sequence)
 }
 
 // RequestWithLockedBucket makes a request using a bucket that's already been locked
 func (s *Session) RequestWithLockedBucket(method, urlStr, contentType string, b []byte, bucket *Bucket, sequence int, options ...RequestOption) (response []byte, err error) {
-	if s.Debug {
-		log.Printf("API REQUEST %8s :: %s\n", method, sanitizeURL(urlStr))
-		log.Printf("API REQUEST  PAYLOAD :: [%s]\n", redactJSON(b))
+	if bucket == nil {
+		return nil, fmt.Errorf("REST rate limit bucket is nil")
 	}
-
-	req, err := http.NewRequest(method, urlStr, bytes.NewBuffer(b))
+	cfg, err := s.prepareRESTRequest(method, urlStr, contentType, b, options...)
 	if err != nil {
-		bucket.Release(nil)
-		return
+		_ = bucket.Release(nil)
+		return nil, err
 	}
+	if sequence < 0 {
+		_ = bucket.Release(nil)
+		return nil, fmt.Errorf("REST retry sequence cannot be negative")
+	}
+	return s.requestWithLockedBucket(cfg, contentType, b, bucket, sequence)
+}
 
+func (s *Session) prepareRESTRequest(method, urlStr, contentType string, body []byte, options ...RequestOption) (*RequestConfig, error) {
+	req, err := http.NewRequest(method, urlStr, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("invalid REST request method %q or URL %s", method, sanitizeURL(urlStr))
+	}
 	// Not used on initial login..
 	// TODO: Verify if a login, otherwise complain about no-token
 	if s.Token != "" {
@@ -234,126 +311,364 @@ func (s *Session) RequestWithLockedBucket(method, urlStr, contentType string, b 
 
 	// Discord's API returns a 400 Bad Request is Content-Type is set, but the
 	// request body is empty.
-	if b != nil {
+	if body != nil {
 		req.Header.Set("Content-Type", contentType)
 	}
-
-	// TODO: Make a configurable static variable.
 	req.Header.Set("User-Agent", s.UserAgent)
 
 	cfg := newRequestConfig(s, req)
 	for _, opt := range options {
-		opt(cfg)
-	}
-	req = cfg.Request
-
-	if s.Debug {
-		for k, v := range req.Header {
-			// Redact sensitive headers before logging to avoid leaking secrets.
-			lowerKey := strings.ToLower(k)
-			valuesToLog := v
-			if lowerKey == "authorization" || lowerKey == "cookie" || lowerKey == "set-cookie" {
-				redactedValues := make([]string, len(v))
-				for i := range v {
-					redactedValues[i] = "REDACTED"
-				}
-				valuesToLog = redactedValues
-			}
-			log.Printf("API REQUEST   HEADER :: [%s] = %+v\n", k, valuesToLog)
+		if opt != nil {
+			opt(cfg)
 		}
 	}
-
-	resp, err := cfg.Client.Do(req)
-	if err != nil {
-		bucket.Release(nil)
-		return
+	if cfg.Request == nil {
+		return nil, fmt.Errorf("REST request option produced a nil request")
 	}
-	defer func() {
-		err2 := resp.Body.Close()
-		if s.Debug && err2 != nil {
-			log.Println("error closing resp body")
-		}
-	}()
-
-	err = bucket.Release(resp.Header)
-	if err != nil {
-		return
+	if cfg.Request.URL == nil {
+		return nil, fmt.Errorf("REST request URL is nil")
 	}
-
-	response, err = io.ReadAll(resp.Body)
-	if err != nil {
-		return
+	if cfg.Client == nil {
+		return nil, fmt.Errorf("REST HTTP client is nil")
 	}
-
-	if s.Debug {
-		log.Printf("API RESPONSE STATUS :: %s\n", resp.Status)
-
-		for k, v := range resp.Header {
-			lowerKey := strings.ToLower(k)
-			valuesToLog := v
-
-			if lowerKey == "authorization" || lowerKey == "cookie" || lowerKey == "set-cookie" {
-				redactedValues := make([]string, len(v))
-				for i := range v {
-					redactedValues[i] = "REDACTED"
-				}
-				valuesToLog = redactedValues
-			}
-			log.Printf("API RESPONSE HEADER :: [%s] = %+v\n", k, valuesToLog)
-		}
+	if cfg.MaxRestRetries < 0 {
+		cfg.MaxRestRetries = 0
 	}
+	if cfg.MaxResponseSize <= 0 {
+		cfg.MaxResponseSize = 32 << 20
+	}
+	if cfg.MaxRateLimitWait <= 0 {
+		cfg.MaxRateLimitWait = time.Minute
+	}
+	if cfg.MaxRetryWait <= 0 {
+		cfg.MaxRetryWait = 5 * time.Minute
+	}
+	return cfg, nil
+}
 
-	switch {
-	case resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices:
-	case resp.StatusCode == http.StatusBadGateway:
-		// Retry sending request if possible
-		if sequence < cfg.MaxRestRetries {
+func (s *Session) requestWithLockedBucket(cfg *RequestConfig, contentType string, body []byte, bucket *Bucket, sequence int) ([]byte, error) {
+	retries := sequence
+	var totalWait time.Duration
 
-			s.log(LogInformational, "%s Failed (%s), Retrying...", sanitizeURL(urlStr), resp.Status)
-			response, err = s.RequestWithLockedBucket(method, urlStr, contentType, b, s.Ratelimiter.LockBucketObject(bucket), sequence+1, options...)
-		} else {
-			err = fmt.Errorf("Exceeded Max retries HTTP %s, %s", resp.Status, response)
-		}
-	case resp.StatusCode == http.StatusTooManyRequests:
-		rl := TooManyRequests{}
-		err = Unmarshal(response, &rl)
+	for {
+		req, err := cloneRESTRequest(cfg.Request, contentType, body)
 		if err != nil {
-			s.log(LogError, "rate limit unmarshal error, %s", err)
-			return
+			_ = bucket.Release(nil)
+			return nil, err
+		}
+		if s.Debug {
+			log.Printf("API REQUEST %8s :: %s\n", req.Method, sanitizeURL(req.URL.String()))
+			log.Printf("API REQUEST  PAYLOAD :: [%s]\n", redactJSON(body))
+			logHTTPHeaders("API REQUEST   HEADER", req.Header)
 		}
 
-		if cfg.ShouldRetryOnRateLimit {
-			s.log(LogInformational, "Rate Limiting %s, retry in %v", sanitizeURL(urlStr), rl.RetryAfter)
-			s.handleEvent(rateLimitEventType, &RateLimit{TooManyRequests: &rl, URL: sanitizeURL(urlStr)})
-
-			// Wait for the rate limit or context cancellation
-			select {
-			case <-cfg.Request.Context().Done():
-				return nil, cfg.Request.Context().Err()
-			case <-time.After(rl.RetryAfter):
+		resp, requestErr := cfg.Client.Do(req)
+		if requestErr != nil {
+			_ = bucket.Release(nil)
+			if ctxErr := req.Context().Err(); ctxErr != nil {
+				return nil, ctxErr
 			}
-
-			// Re-lock the bucket with context
-			bucket, err = s.Ratelimiter.LockBucketObjectContext(cfg.Request.Context(), bucket)
+			if retries >= cfg.MaxRestRetries || !canRetryRESTMethod(req.Method, cfg.RetryUnsafeMethods) {
+				return nil, sanitizeRESTRequestError(requestErr)
+			}
+			delay := restRetryDelay(retries)
+			if err := waitForRESTRetry(req.Context(), delay, &totalWait, cfg.MaxRetryWait); err != nil {
+				return nil, fmt.Errorf("REST network retry wait failed: %w", err)
+			}
+			retries++
+			bucket, err = relockRESTBucket(req.Context(), s.Ratelimiter, bucket)
 			if err != nil {
 				return nil, err
 			}
+			continue
+		}
 
-			response, err = s.RequestWithLockedBucket(method, urlStr, contentType, b, bucket, sequence, options...)
-		} else {
-			err = &RateLimitError{&RateLimit{TooManyRequests: &rl, URL: sanitizeURL(urlStr)}}
+		response, readErr := readRESTResponseBody(resp, cfg.MaxResponseSize)
+		closeErr := resp.Body.Close()
+		releaseErr := bucket.Release(resp.Header)
+		if s.Debug {
+			log.Printf("API RESPONSE STATUS :: %s\n", resp.Status)
+			logHTTPHeaders("API RESPONSE HEADER", resp.Header)
+			if closeErr != nil {
+				log.Println("error closing resp body")
+			}
 		}
-	case resp.StatusCode == http.StatusUnauthorized:
-		if strings.Index(s.Token, "Bot ") != 0 {
+		if readErr != nil {
+			return nil, readErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		if releaseErr != nil {
+			return nil, releaseErr
+		}
+
+		switch {
+		case resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices:
+			return response, nil
+
+		case resp.StatusCode == http.StatusTooManyRequests:
+			rateLimit := TooManyRequests{}
+			if err := Unmarshal(response, &rateLimit); err != nil {
+				return nil, fmt.Errorf("rate limit response decode failed: %w", err)
+			}
+			rateLimitErr := &RateLimitError{&RateLimit{
+				TooManyRequests: &rateLimit,
+				URL:             sanitizeURL(req.URL.String()),
+			}}
+			s.handleEvent(rateLimitEventType, rateLimitErr.RateLimit)
+			if !cfg.ShouldRetryOnRateLimit {
+				return nil, rateLimitErr
+			}
+			if retries >= cfg.MaxRestRetries {
+				return nil, fmt.Errorf("exceeded maximum REST retries: %w", rateLimitErr)
+			}
+			if rateLimit.RetryAfter < 0 || rateLimit.RetryAfter > cfg.MaxRateLimitWait {
+				return nil, fmt.Errorf(
+					"rate limit wait %s exceeds configured maximum %s: %w",
+					rateLimit.RetryAfter,
+					cfg.MaxRateLimitWait,
+					rateLimitErr,
+				)
+			}
+			retryDelay := rateLimitRetryDelay(rateLimit.RetryAfter, cfg.MaxRateLimitWait)
+			s.log(LogInformational, "Rate Limiting %s, retry in %v", sanitizeURL(req.URL.String()), retryDelay)
+			if err := waitForRESTRetry(req.Context(), retryDelay, &totalWait, cfg.MaxRetryWait); err != nil {
+				return nil, fmt.Errorf("rate limit retry wait failed: %w", err)
+			}
+			retries++
+			bucket, err = relockRESTBucket(req.Context(), s.Ratelimiter, bucket)
+			if err != nil {
+				return nil, err
+			}
+			continue
+
+		case isTransientRESTStatus(resp.StatusCode):
+			restErr := newRestError(req, resp, response)
+			if retries >= cfg.MaxRestRetries || !canRetryRESTMethod(req.Method, cfg.RetryUnsafeMethods) {
+				if retries >= cfg.MaxRestRetries && canRetryRESTMethod(req.Method, cfg.RetryUnsafeMethods) {
+					return nil, fmt.Errorf("exceeded maximum REST retries: %w", restErr)
+				}
+				return nil, restErr
+			}
+			s.log(LogInformational, "%s Failed (%s), Retrying...", sanitizeURL(req.URL.String()), resp.Status)
+			delay := restRetryDelay(retries)
+			if err := waitForRESTRetry(req.Context(), delay, &totalWait, cfg.MaxRetryWait); err != nil {
+				return nil, fmt.Errorf("REST transient retry wait failed: %w", err)
+			}
+			retries++
+			bucket, err = relockRESTBucket(req.Context(), s.Ratelimiter, bucket)
+			if err != nil {
+				return nil, err
+			}
+			continue
+
+		case resp.StatusCode == http.StatusUnauthorized:
 			s.log(LogInformational, "%s", ErrUnauthorized.Error())
-			err = ErrUnauthorized
+			return nil, newRestErrorWithCause(req, resp, response, ErrUnauthorized)
+
+		default:
+			return nil, newRestError(req, resp, response)
 		}
-		fallthrough
-	default: // Error condition
-		err = newRestError(req, resp, response)
+	}
+}
+
+func cloneRESTRequest(template *http.Request, contentType string, body []byte) (*http.Request, error) {
+	if template == nil || template.URL == nil {
+		return nil, fmt.Errorf("REST request template is invalid")
+	}
+	req := template.Clone(template.Context())
+	if body == nil {
+		req.Body = nil
+		req.GetBody = nil
+		req.ContentLength = 0
+		return req, nil
+	}
+	newBody := func() io.ReadCloser {
+		return io.NopCloser(bytes.NewReader(body))
+	}
+	req.Body = newBody()
+	req.GetBody = func() (io.ReadCloser, error) {
+		return newBody(), nil
+	}
+	req.ContentLength = int64(len(body))
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	return req, nil
+}
+
+func readRESTResponseBody(resp *http.Response, limit int64) ([]byte, error) {
+	if resp == nil || resp.Body == nil {
+		return nil, fmt.Errorf("REST response or body is nil")
+	}
+	if resp.ContentLength > limit {
+		return nil, &RESTResponseTooLargeError{Limit: limit}
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > limit {
+		return nil, &RESTResponseTooLargeError{Limit: limit}
+	}
+	return body, nil
+}
+
+func waitForRESTRetry(ctx context.Context, delay time.Duration, totalWait *time.Duration, maxTotalWait time.Duration) error {
+	if delay < 0 {
+		return fmt.Errorf("negative retry delay %s", delay)
+	}
+	if maxTotalWait > 0 && *totalWait+delay > maxTotalWait {
+		return fmt.Errorf("cumulative retry wait would exceed %s", maxTotalWait)
+	}
+	*totalWait += delay
+	if delay == 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			return nil
+		}
 	}
 
-	return
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func restRetryDelay(retry int) time.Duration {
+	if retry < 0 {
+		retry = 0
+	}
+	if retry > 3 {
+		retry = 3
+	}
+	base := 250 * time.Millisecond * time.Duration(1<<retry)
+	jitterRange := base / 4
+	if jitterRange <= 0 {
+		return base
+	}
+	jitter := time.Duration(time.Now().UnixNano() % int64(jitterRange))
+	return base + jitter
+}
+
+func rateLimitRetryDelay(delay, maximum time.Duration) time.Duration {
+	if delay <= 0 {
+		return delay
+	}
+	jitterRange := delay / 10
+	if jitterRange > 50*time.Millisecond {
+		jitterRange = 50 * time.Millisecond
+	}
+	if jitterRange <= 0 {
+		return delay
+	}
+	jitter := time.Duration(time.Now().UnixNano() % int64(jitterRange))
+	if maximum > 0 && delay+jitter > maximum {
+		return delay
+	}
+	return delay + jitter
+}
+
+func canRetryRESTMethod(method string, retryUnsafe bool) bool {
+	if retryUnsafe {
+		return true
+	}
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete, http.MethodOptions, http.MethodTrace:
+		return true
+	default:
+		return false
+	}
+}
+
+func isTransientRESTStatus(status int) bool {
+	switch status {
+	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusGatewayTimeout, 524:
+		return true
+	default:
+		return false
+	}
+}
+
+func relockRESTBucket(ctx context.Context, limiter *RateLimiter, bucket *Bucket) (*Bucket, error) {
+	if bucket == nil {
+		return nil, fmt.Errorf("REST rate limit bucket is nil")
+	}
+	if bucket.ratelimiter != nil {
+		limiter = bucket.ratelimiter
+	}
+	if limiter == nil {
+		return nil, fmt.Errorf("REST rate limiter is nil")
+	}
+	return limiter.LockBucketObjectContext(ctx, bucket)
+}
+
+func logHTTPHeaders(prefix string, headers http.Header) {
+	for key, values := range sanitizeHTTPHeaders(headers) {
+		log.Printf("%s :: [%s] = %+v\n", prefix, key, values)
+	}
+}
+
+func sanitizeHTTPHeaders(headers http.Header) http.Header {
+	safe := make(http.Header, len(headers))
+	for key, values := range headers {
+		if isSensitiveLogKey(key) || strings.EqualFold(key, "cookie") || strings.EqualFold(key, "set-cookie") {
+			safe[key] = []string{redactedValue}
+			continue
+		}
+		safe[key] = append([]string(nil), values...)
+	}
+	return safe
+}
+
+func sanitizeHTTPRequest(req *http.Request) *http.Request {
+	if req == nil {
+		return nil
+	}
+	safe := req.Clone(context.Background())
+	safe.Header = sanitizeHTTPHeaders(req.Header)
+	safe.Body = nil
+	safe.GetBody = nil
+	safe.ContentLength = 0
+	if req.URL != nil {
+		if parsed, err := url.Parse(sanitizeURL(req.URL.String())); err == nil {
+			safe.URL = parsed
+			safe.RequestURI = parsed.RequestURI()
+		}
+	}
+	return safe
+}
+
+func sanitizeHTTPResponse(resp *http.Response, request *http.Request, body []byte) *http.Response {
+	if resp == nil {
+		return nil
+	}
+	safe := new(http.Response)
+	*safe = *resp
+	safe.Header = sanitizeHTTPHeaders(resp.Header)
+	safe.Request = request
+	safe.Body = io.NopCloser(bytes.NewReader(body))
+	safe.ContentLength = int64(len(body))
+	return safe
+}
+
+func sanitizeRESTRequestError(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return &url.Error{
+			Op:  urlErr.Op,
+			URL: sanitizeURL(urlErr.URL),
+			Err: urlErr.Err,
+		}
+	}
+	return err
 }
 
 // GuildMessagesSearch searches messages in a guild using the supplied filters.

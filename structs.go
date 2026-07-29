@@ -90,6 +90,15 @@ type Session struct {
 	// Max number of REST API retries
 	MaxRestRetries int
 
+	// Maximum REST response body size in bytes.
+	MaxRestResponseSize int64
+
+	// Maximum time a single REST rate-limit response may ask the client to wait.
+	MaxRestRateLimitWait time.Duration
+
+	// Maximum cumulative time spent waiting between retries for one REST request.
+	MaxRestRetryWait time.Duration
+
 	// Whether the Voice Websocket is ready
 	VoiceReady bool // NOTE: Deprecated.
 

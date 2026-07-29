@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -1015,6 +1016,355 @@ func TestGuildAuditLogComplexRejectsInvalidPagination(t *testing.T) {
 	}
 }
 
+func TestRequestRawValidatesInputsAndAppliesOptionsOnce(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	optionCalls := 0
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Header.Get("X-Test") != "set" {
+			t.Fatal("request option header was not applied")
+		}
+		return jsonResponse(http.StatusPartialContent, `{"ok":true}`), nil
+	})
+
+	body, err := session.RequestRaw(http.MethodGet, "https://discord.com/api/v10/test", "", nil, "", 0, func(cfg *RequestConfig) {
+		optionCalls++
+		cfg.Request.Header.Set("X-Test", "set")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != `{"ok":true}` {
+		t.Fatalf("body = %q", body)
+	}
+	if optionCalls != 1 {
+		t.Fatalf("request option calls = %d, want 1", optionCalls)
+	}
+
+	if _, err := session.RequestRaw("bad\nmethod", "https://discord.com", "", nil, "", 0); err == nil {
+		t.Fatal("expected invalid method error")
+	}
+	if _, err := session.RequestRaw(http.MethodGet, "http://[::1", "", nil, "", 0); err == nil {
+		t.Fatal("expected invalid URL error")
+	}
+	if _, err := session.RequestWithLockedBucket(http.MethodGet, "https://discord.com", "", nil, nil, 0); err == nil {
+		t.Fatal("expected nil bucket error")
+	}
+}
+
+func TestRequestRawBoundsRateLimitRetriesAndClosesBodies(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts := 0
+	closed := 0
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		attempts++
+		return &http.Response{
+			StatusCode: http.StatusTooManyRequests,
+			Status:     "429 Too Many Requests",
+			Header:     make(http.Header),
+			Body: &trackingReadCloser{
+				Reader: strings.NewReader(`{"retry_after":0,"global":false}`),
+				closed: &closed,
+			},
+		}, nil
+	})
+
+	_, err = session.RequestRaw(
+		http.MethodGet,
+		"https://discord.com/api/v10/test",
+		"",
+		nil,
+		"",
+		0,
+		WithRestRetries(2),
+	)
+	var rateLimitErr *RateLimitError
+	if !errors.As(err, &rateLimitErr) {
+		t.Fatalf("error = %v, want RateLimitError", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts)
+	}
+	if closed != attempts {
+		t.Fatalf("closed bodies = %d, want %d", closed, attempts)
+	}
+}
+
+func TestRequestRawRetriesTransientResponsesByMethodPolicy(t *testing.T) {
+	t.Run("idempotent", func(t *testing.T) {
+		session, err := New("Bot token")
+		if err != nil {
+			t.Fatal(err)
+		}
+		attempts := 0
+		session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+			attempts++
+			if attempts == 1 {
+				return jsonResponse(http.StatusInternalServerError, `{"message":"retry"}`), nil
+			}
+			return jsonResponse(http.StatusOK, `{"ok":true}`), nil
+		})
+
+		if _, err := session.RequestRaw(
+			http.MethodGet,
+			"https://discord.com/api/v10/test",
+			"",
+			nil,
+			"",
+			0,
+			WithRestRetries(1),
+			WithRestRetryWait(2*time.Second),
+		); err != nil {
+			t.Fatal(err)
+		}
+		if attempts != 2 {
+			t.Fatalf("attempts = %d, want 2", attempts)
+		}
+	})
+
+	t.Run("unsafe disabled", func(t *testing.T) {
+		session, err := New("Bot token")
+		if err != nil {
+			t.Fatal(err)
+		}
+		attempts := 0
+		session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+			attempts++
+			return jsonResponse(http.StatusBadGateway, `{"message":"do not retry"}`), nil
+		})
+
+		_, err = session.RequestRaw(
+			http.MethodPost,
+			"https://discord.com/api/v10/test",
+			"application/json",
+			[]byte(`{}`),
+			"",
+			0,
+			WithRestRetries(3),
+		)
+		var restErr *RESTError
+		if !errors.As(err, &restErr) {
+			t.Fatalf("error = %v, want RESTError", err)
+		}
+		if attempts != 1 {
+			t.Fatalf("attempts = %d, want 1", attempts)
+		}
+	})
+
+	t.Run("unsafe explicitly enabled", func(t *testing.T) {
+		session, err := New("Bot token")
+		if err != nil {
+			t.Fatal(err)
+		}
+		attempts := 0
+		session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+			attempts++
+			if attempts == 1 {
+				return jsonResponse(http.StatusGatewayTimeout, `{"message":"retry"}`), nil
+			}
+			return jsonResponse(http.StatusOK, `{}`), nil
+		})
+
+		if _, err := session.RequestRaw(
+			http.MethodPost,
+			"https://discord.com/api/v10/test",
+			"application/json",
+			[]byte(`{}`),
+			"",
+			0,
+			WithRestRetries(1),
+			WithUnsafeRestRetries(true),
+			WithRestRetryWait(2*time.Second),
+		); err != nil {
+			t.Fatal(err)
+		}
+		if attempts != 2 {
+			t.Fatalf("attempts = %d, want 2", attempts)
+		}
+	})
+
+	t.Run("network error", func(t *testing.T) {
+		session, err := New("Bot token")
+		if err != nil {
+			t.Fatal(err)
+		}
+		attempts := 0
+		networkErr := errors.New("connection reset")
+		session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+			attempts++
+			if attempts == 1 {
+				return nil, networkErr
+			}
+			return jsonResponse(http.StatusOK, `{}`), nil
+		})
+
+		if _, err := session.RequestRaw(
+			http.MethodGet,
+			"https://discord.com/api/v10/test",
+			"",
+			nil,
+			"",
+			0,
+			WithRestRetries(1),
+			WithRestRetryWait(2*time.Second),
+		); err != nil {
+			t.Fatal(err)
+		}
+		if attempts != 2 {
+			t.Fatalf("attempts = %d, want 2", attempts)
+		}
+	})
+}
+
+func TestRequestRawResponseLimit(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	responses := []string{"1234", "12345"}
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		body := responses[0]
+		responses = responses[1:]
+		return jsonResponse(http.StatusOK, body), nil
+	})
+
+	body, err := session.RequestRaw(
+		http.MethodGet,
+		"https://discord.com/api/v10/test",
+		"",
+		nil,
+		"",
+		0,
+		WithRestResponseLimit(4),
+	)
+	if err != nil || string(body) != "1234" {
+		t.Fatalf("exact-limit response = %q, %v", body, err)
+	}
+	_, err = session.RequestRaw(
+		http.MethodGet,
+		"https://discord.com/api/v10/test",
+		"",
+		nil,
+		"",
+		0,
+		WithRestResponseLimit(4),
+	)
+	if !errors.Is(err, ErrRESTResponseTooLarge) {
+		t.Fatalf("error = %v, want ErrRESTResponseTooLarge", err)
+	}
+}
+
+func TestRESTErrorIsUnauthorizedAndSanitized(t *testing.T) {
+	session, err := New("Bot request-authorization-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		response := jsonResponse(http.StatusUnauthorized, `{
+			"code":40001,
+			"message":"unauthorized",
+			"token":"response-body-secret",
+			"url":"https://discord.com/api/v10/webhooks/1/response-url-secret"
+		}`)
+		response.Header.Set("Set-Cookie", "response-cookie-secret")
+		return response, nil
+	})
+
+	_, err = session.RequestRaw(
+		http.MethodGet,
+		"https://discord.com/api/v10/webhooks/1/request-url-secret",
+		"",
+		nil,
+		"",
+		0,
+	)
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("error = %v, want ErrUnauthorized", err)
+	}
+	var restErr *RESTError
+	if !errors.As(err, &restErr) {
+		t.Fatalf("error = %v, want RESTError", err)
+	}
+	if restErr.Message == nil || restErr.Message.Code != 40001 {
+		t.Fatalf("numeric Discord error code was not retained: %#v", restErr.Message)
+	}
+	formatted := fmt.Sprintf("%+v", restErr)
+	for _, secret := range []string{
+		"request-authorization-secret",
+		"request-url-secret",
+		"response-body-secret",
+		"response-url-secret",
+		"response-cookie-secret",
+	} {
+		if strings.Contains(formatted, secret) {
+			t.Fatalf("RESTError leaked %q: %s", secret, formatted)
+		}
+	}
+}
+
+func TestRequestRawRateLimitWaitHonorsContextAndMaximum(t *testing.T) {
+	newSession := func(t *testing.T, retryAfter float64) *Session {
+		t.Helper()
+		session, err := New("Bot token")
+		if err != nil {
+			t.Fatal(err)
+		}
+		session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+			return jsonResponse(http.StatusTooManyRequests, fmt.Sprintf(
+				`{"retry_after":%v,"global":false}`,
+				retryAfter,
+			)), nil
+		})
+		return session
+	}
+
+	t.Run("context cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		session, err := New("Bot token")
+		if err != nil {
+			t.Fatal(err)
+		}
+		session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+			cancel()
+			return jsonResponse(http.StatusTooManyRequests, `{"retry_after":10,"global":false}`), nil
+		})
+		_, err = session.RequestRaw(
+			http.MethodGet,
+			"https://discord.com/api/v10/test",
+			"",
+			nil,
+			"",
+			0,
+			WithContext(ctx),
+		)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v, want context.Canceled", err)
+		}
+	})
+
+	t.Run("single wait maximum", func(t *testing.T) {
+		session := newSession(t, 2)
+		_, err := session.RequestRaw(
+			http.MethodGet,
+			"https://discord.com/api/v10/test",
+			"",
+			nil,
+			"",
+			0,
+			WithRestRateLimitWait(time.Second),
+		)
+		var rateLimitErr *RateLimitError
+		if !errors.As(err, &rateLimitErr) {
+			t.Fatalf("error = %v, want RateLimitError", err)
+		}
+	})
+}
+
 func TestWithContext(t *testing.T) {
 	// Set up a test context.
 	type key struct{}
@@ -1038,7 +1388,7 @@ func TestWithContext(t *testing.T) {
 	})
 
 	// Run any client method using WithContext.
-	_, err = session.User("", WithContext(ctx))
+	_, err = session.User("", WithContext(ctx), WithRestRetries(0))
 
 	// Verify that the assertion code was actually run.
 	if !errors.Is(err, testErr) {
@@ -1051,4 +1401,14 @@ type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+type trackingReadCloser struct {
+	io.Reader
+	closed *int
+}
+
+func (r *trackingReadCloser) Close() error {
+	*r.closed++
+	return nil
 }

@@ -405,6 +405,9 @@ type File struct {
 	Name        string
 	ContentType string
 	Reader      io.Reader
+	// Open optionally returns a fresh reader for each HTTP attempt. Set Open
+	// when a request may be retried and Reader is not an io.ReadSeeker.
+	Open func() (io.ReadCloser, error)
 }
 
 // MessageSend stores all parameters you can send with ChannelMessageSendComplex.

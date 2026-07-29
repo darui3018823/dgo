@@ -135,6 +135,7 @@ func (e RateLimitError) Error() string {
 // RequestConfig is an HTTP request configuration.
 type RequestConfig struct {
 	Request                *http.Request
+	BodyFactory            func() (io.ReadCloser, error)
 	ShouldRetryOnRateLimit bool
 	MaxRestRetries         int
 	MaxResponseSize        int64
@@ -263,23 +264,42 @@ func (s *Session) RequestRaw(method, urlStr, contentType string, b []byte, bucke
 	if err != nil {
 		return nil, err
 	}
+	return s.requestRawPrepared(cfg, contentType, b, bucketID, sequence)
+}
+
+// RequestRawWithBody makes a streaming REST request. bodyFactory must return a
+// fresh body for every HTTP attempt so rate-limit and transient retries do not
+// reuse a consumed reader.
+func (s *Session) RequestRawWithBody(method, urlStr, contentType string, bodyFactory func() (io.ReadCloser, error), bucketID string, sequence int, options ...RequestOption) ([]byte, error) {
+	if bodyFactory == nil {
+		return nil, fmt.Errorf("REST request body factory is nil")
+	}
+	cfg, err := s.prepareRESTRequest(method, urlStr, contentType, []byte{}, options...)
+	if err != nil {
+		return nil, err
+	}
+	cfg.BodyFactory = bodyFactory
+	return s.requestRawPrepared(cfg, contentType, nil, bucketID, sequence)
+}
+
+func (s *Session) requestRawPrepared(cfg *RequestConfig, contentType string, body []byte, bucketID string, sequence int) ([]byte, error) {
 	if sequence < 0 {
 		return nil, fmt.Errorf("REST retry sequence cannot be negative")
 	}
 	if bucketID == "" {
-		bucketID = strings.SplitN(urlStr, "?", 2)[0]
+		bucketID = strings.SplitN(cfg.Request.URL.String(), "?", 2)[0]
 	}
 	if s.Ratelimiter == nil {
 		return nil, fmt.Errorf("REST rate limiter is nil")
 	}
 
-	routeKey, majorKey := restRateLimitKeys(method, urlStr, bucketID)
+	routeKey, majorKey := restRateLimitKeys(cfg.Request.Method, cfg.Request.URL.String(), bucketID)
 	bucket, err := s.Ratelimiter.LockBucketRouteContext(cfg.Request.Context(), routeKey, majorKey)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.requestWithLockedBucket(cfg, contentType, b, bucket, sequence)
+	return s.requestWithLockedBucket(cfg, contentType, body, bucket, sequence)
 }
 
 // RequestWithLockedBucket makes a request using a bucket that's already been locked
@@ -365,14 +385,18 @@ func (s *Session) requestWithLockedBucket(cfg *RequestConfig, contentType string
 	var totalWait time.Duration
 
 	for {
-		req, err := cloneRESTRequest(cfg.Request, contentType, body)
+		req, err := cloneRESTRequest(cfg.Request, contentType, body, cfg.BodyFactory)
 		if err != nil {
 			_ = bucket.Release(nil)
 			return nil, err
 		}
 		if s.Debug {
 			log.Printf("API REQUEST %8s :: %s\n", req.Method, sanitizeURL(req.URL.String()))
-			log.Printf("API REQUEST  PAYLOAD :: [%s]\n", redactJSON(body))
+			if cfg.BodyFactory != nil {
+				log.Printf("API REQUEST  PAYLOAD :: [streaming body omitted]\n")
+			} else {
+				log.Printf("API REQUEST  PAYLOAD :: [%s]\n", redactJSON(body))
+			}
 			logHTTPHeaders("API REQUEST   HEADER", req.Header)
 		}
 
@@ -515,11 +539,27 @@ func (s *Session) requestWithLockedBucket(cfg *RequestConfig, contentType string
 	}
 }
 
-func cloneRESTRequest(template *http.Request, contentType string, body []byte) (*http.Request, error) {
+func cloneRESTRequest(template *http.Request, contentType string, body []byte, bodyFactory func() (io.ReadCloser, error)) (*http.Request, error) {
 	if template == nil || template.URL == nil {
 		return nil, fmt.Errorf("REST request template is invalid")
 	}
 	req := template.Clone(template.Context())
+	if bodyFactory != nil {
+		stream, err := bodyFactory()
+		if err != nil {
+			return nil, fmt.Errorf("open REST request body: %w", err)
+		}
+		if stream == nil {
+			return nil, fmt.Errorf("REST request body factory returned nil")
+		}
+		req.Body = stream
+		req.GetBody = bodyFactory
+		req.ContentLength = -1
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		return req, nil
+	}
 	if body == nil {
 		req.Body = nil
 		req.GetBody = nil
@@ -2171,7 +2211,7 @@ func (s *Session) GuildStickerCreate(guildID string, data *GuildStickerCreate, o
 		return nil, fmt.Errorf("data can not be nil")
 	}
 
-	contentType, body, encodeErr := MultipartBodyWithFieldsAndFile(map[string]string{
+	multipartBody, encodeErr := NewMultipartBodyWithFieldsAndFile(map[string]string{
 		"name":        data.Name,
 		"description": data.Description,
 		"tags":        data.Tags,
@@ -2180,7 +2220,15 @@ func (s *Session) GuildStickerCreate(guildID string, data *GuildStickerCreate, o
 		return nil, encodeErr
 	}
 
-	response, err := s.RequestRaw("POST", EndpointGuildStickers(guildID), contentType, body, EndpointGuildStickers(guildID), 0, options...)
+	response, err := s.RequestRawWithBody(
+		"POST",
+		EndpointGuildStickers(guildID),
+		multipartBody.ContentType(),
+		multipartBody.Open,
+		EndpointGuildStickers(guildID),
+		0,
+		options...,
+	)
 	if err != nil {
 		return
 	}
@@ -2564,11 +2612,11 @@ func (s *Session) ChannelMessageSendComplex(channelID string, data *MessageSend,
 
 	var response []byte
 	if len(files) > 0 {
-		contentType, body, encodeErr := MultipartBodyWithJSON(data, files)
+		multipartBody, encodeErr := NewMultipartBodyWithJSON(data, files)
 		if encodeErr != nil {
 			return st, encodeErr
 		}
-		response, err = s.RequestRaw("POST", endpoint, contentType, body, endpoint, 0, options...)
+		response, err = s.RequestRawWithBody("POST", endpoint, multipartBody.ContentType(), multipartBody.Open, endpoint, 0, options...)
 	} else {
 		response, err = s.RequestWithBucketID("POST", endpoint, data, endpoint, options...)
 	}
@@ -2684,11 +2732,19 @@ func (s *Session) ChannelMessageEditComplex(m *MessageEdit, options ...RequestOp
 
 	var response []byte
 	if len(m.Files) > 0 {
-		contentType, body, encodeErr := MultipartBodyWithJSON(m, m.Files)
+		multipartBody, encodeErr := NewMultipartBodyWithJSON(m, m.Files)
 		if encodeErr != nil {
 			return st, encodeErr
 		}
-		response, err = s.RequestRaw("PATCH", endpoint, contentType, body, EndpointChannelMessage(m.Channel, ""), 0, options...)
+		response, err = s.RequestRawWithBody(
+			"PATCH",
+			endpoint,
+			multipartBody.ContentType(),
+			multipartBody.Open,
+			EndpointChannelMessage(m.Channel, ""),
+			0,
+			options...,
+		)
 	} else {
 		response, err = s.RequestWithBucketID("PATCH", endpoint, m, EndpointChannelMessage(m.Channel, ""), options...)
 	}
@@ -3254,12 +3310,12 @@ func (s *Session) webhookExecute(webhookID, token string, wait bool, threadID st
 
 	var response []byte
 	if len(data.Files) > 0 {
-		contentType, body, encodeErr := MultipartBodyWithJSON(data, data.Files)
+		multipartBody, encodeErr := NewMultipartBodyWithJSON(data, data.Files)
 		if encodeErr != nil {
 			return st, encodeErr
 		}
 
-		response, err = s.RequestRaw("POST", uri, contentType, body, uri, 0, options...)
+		response, err = s.RequestRawWithBody("POST", uri, multipartBody.ContentType(), multipartBody.Open, uri, 0, options...)
 	} else {
 		response, err = s.RequestWithBucketID("POST", uri, data, uri, options...)
 	}
@@ -3322,12 +3378,12 @@ func (s *Session) WebhookMessageEdit(webhookID, token, messageID string, data *W
 
 	var response []byte
 	if len(data.Files) > 0 {
-		contentType, body, err := MultipartBodyWithJSON(data, data.Files)
+		multipartBody, err := NewMultipartBodyWithJSON(data, data.Files)
 		if err != nil {
 			return nil, err
 		}
 
-		response, err = s.RequestRaw("PATCH", uri, contentType, body, uri, 0, options...)
+		response, err = s.RequestRawWithBody("PATCH", uri, multipartBody.ContentType(), multipartBody.Open, uri, 0, options...)
 		if err != nil {
 			return nil, err
 		}
@@ -3568,12 +3624,12 @@ func (s *Session) ForumThreadStartComplex(channelID string, threadData *ThreadSt
 
 	var response []byte
 	if len(files) > 0 {
-		contentType, body, encodeErr := MultipartBodyWithJSON(data, files)
+		multipartBody, encodeErr := NewMultipartBodyWithJSON(data, files)
 		if encodeErr != nil {
 			return th, encodeErr
 		}
 
-		response, err = s.RequestRaw("POST", endpoint, contentType, body, endpoint, 0, options...)
+		response, err = s.RequestRawWithBody("POST", endpoint, multipartBody.ContentType(), multipartBody.Open, endpoint, 0, options...)
 	} else {
 		response, err = s.RequestWithBucketID("POST", endpoint, data, endpoint, options...)
 	}
@@ -4006,12 +4062,12 @@ func (s *Session) InteractionRespond(interaction *Interaction, resp *Interaction
 	endpoint := EndpointInteractionResponse(interaction.ID, interaction.Token)
 
 	if resp.Data != nil && len(resp.Data.Files) > 0 {
-		contentType, body, err := MultipartBodyWithJSON(resp, resp.Data.Files)
+		multipartBody, err := NewMultipartBodyWithJSON(resp, resp.Data.Files)
 		if err != nil {
 			return err
 		}
 
-		_, err = s.RequestRaw("POST", endpoint, contentType, body, endpoint, 0, options...)
+		_, err = s.RequestRawWithBody("POST", endpoint, multipartBody.ContentType(), multipartBody.Open, endpoint, 0, options...)
 		return err
 	}
 

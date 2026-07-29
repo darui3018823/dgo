@@ -1132,6 +1132,100 @@ func TestRequestRawBoundsRateLimitRetriesAndClosesBodies(t *testing.T) {
 	}
 }
 
+func TestRequestRawWithBodyReopensMultipartOnRetry(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Ratelimiter.GlobalRateLimit = 0
+	opens := 0
+	multipartBody, err := NewMultipartBodyWithJSON(
+		map[string]string{"content": "hello"},
+		[]*File{{
+			Name: "retry.txt",
+			Open: func() (io.ReadCloser, error) {
+				opens++
+				return io.NopCloser(strings.NewReader("RETRY-FILE")), nil
+			},
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var requestBodies [][]byte
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		data, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := request.Body.Close(); err != nil {
+			t.Fatal(err)
+		}
+		requestBodies = append(requestBodies, data)
+		if len(requestBodies) == 1 {
+			return jsonResponse(http.StatusTooManyRequests, `{"retry_after":0,"global":false}`), nil
+		}
+		return jsonResponse(http.StatusOK, `{"ok":true}`), nil
+	})
+
+	if _, err := session.RequestRawWithBody(
+		http.MethodPost,
+		"https://discord.com/api/v10/test",
+		multipartBody.ContentType(),
+		multipartBody.Open,
+		"",
+		0,
+		WithRestRetries(1),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if opens != 2 {
+		t.Fatalf("file opens = %d, want 2", opens)
+	}
+	if len(requestBodies) != 2 || !bytes.Equal(requestBodies[0], requestBodies[1]) {
+		t.Fatal("multipart request body was not replayed exactly")
+	}
+
+	nonReplaySession, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonReplaySession.Ratelimiter.GlobalRateLimit = 0
+	nonReplayable, err := NewMultipartBodyWithJSON(
+		map[string]string{"content": "hello"},
+		[]*File{{
+			Name:   "once.txt",
+			Reader: &countingReader{reader: strings.NewReader("ONCE")},
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts := 0
+	nonReplaySession.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		attempts++
+		_, _ = io.Copy(io.Discard, request.Body)
+		_ = request.Body.Close()
+		return jsonResponse(http.StatusTooManyRequests, `{"retry_after":0,"global":false}`), nil
+	})
+	_, err = nonReplaySession.RequestRawWithBody(
+		http.MethodPost,
+		"https://discord.com/api/v10/test",
+		nonReplayable.ContentType(),
+		nonReplayable.Open,
+		"",
+		0,
+		WithRestRetries(1),
+	)
+	if !errors.Is(err, ErrMultipartBodyNotReplayable) {
+		t.Fatalf("non-replayable retry error = %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("non-replayable transport attempts = %d, want 1", attempts)
+	}
+}
+
 func TestRequestRawRetriesTransientResponsesByMethodPolicy(t *testing.T) {
 	t.Run("idempotent", func(t *testing.T) {
 		session, err := New("Bot token")

@@ -896,6 +896,56 @@ func TestGuildRoleColorsValidation(t *testing.T) {
 	}
 }
 
+func TestMessageReactionsComplexIncludesReactionType(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		query := request.URL.Query()
+		if query.Get("type") != "1" ||
+			query.Get("limit") != "50" ||
+			query.Get("after") != "user" {
+			t.Fatalf("unexpected reaction query: %s", request.URL.RawQuery)
+		}
+		return jsonResponse(http.StatusOK, `[{"id":"reactor"}]`), nil
+	})
+
+	users, err := session.MessageReactionsComplex("channel", "message", "🔥", &MessageReactionsParams{
+		Type:    ReactionTypeBurst,
+		Limit:   50,
+		AfterID: "user",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 1 || users[0].ID != "reactor" {
+		t.Fatalf("unexpected users: %#v", users)
+	}
+}
+
+func TestMessageReactionsComplexRejectsInvalidParams(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		t.Fatal("invalid reaction parameters must not make a request")
+		return nil, nil
+	})
+
+	if _, err := session.MessageReactionsComplex("channel", "message", "emoji", &MessageReactionsParams{
+		Type: 2,
+	}); err == nil {
+		t.Fatal("expected reaction type validation error")
+	}
+	if _, err := session.MessageReactionsComplex("channel", "message", "emoji", &MessageReactionsParams{
+		Limit: 101,
+	}); err == nil {
+		t.Fatal("expected reaction limit validation error")
+	}
+}
+
 func TestWithContext(t *testing.T) {
 	// Set up a test context.
 	type key struct{}

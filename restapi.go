@@ -3004,26 +3004,44 @@ func (s *Session) MessageReactionsRemoveEmoji(channelID, messageID, emojiID stri
 // beforeID  : If provided all reactions returned will be before given ID.
 // afterID   : If provided all reactions returned will be after given ID.
 func (s *Session) MessageReactions(channelID, messageID, emojiID string, limit int, beforeID, afterID string, options ...RequestOption) (st []*User, err error) {
+	return s.MessageReactionsComplex(channelID, messageID, emojiID, &MessageReactionsParams{
+		Type:     ReactionTypeNormal,
+		Limit:    limit,
+		BeforeID: beforeID,
+		AfterID:  afterID,
+	}, options...)
+}
+
+// MessageReactionsComplex gets users who reacted with a specific normal or burst reaction.
+func (s *Session) MessageReactionsComplex(channelID, messageID, emojiID string, params *MessageReactionsParams, options ...RequestOption) (st []*User, err error) {
 	// emoji such as  #⃣ need to have # escaped
 	emojiID = strings.Replace(emojiID, "#", "%23", -1)
 	uri := EndpointMessageReactions(channelID, messageID, emojiID)
 
 	v := url.Values{}
-
-	if limit > 0 {
-		v.Set("limit", strconv.Itoa(limit))
+	if params == nil {
+		params = &MessageReactionsParams{}
+	}
+	if params.Type != ReactionTypeNormal && params.Type != ReactionTypeBurst {
+		return nil, fmt.Errorf("reaction type must be ReactionTypeNormal or ReactionTypeBurst")
+	}
+	if params.Limit < 0 || params.Limit > 100 {
+		return nil, fmt.Errorf("reaction limit must be 0 or between 1 and 100")
 	}
 
-	if afterID != "" {
-		v.Set("after", afterID)
-	}
-	if beforeID != "" {
-		v.Set("before", beforeID)
+	v.Set("type", strconv.Itoa(int(params.Type)))
+	if params.Limit > 0 {
+		v.Set("limit", strconv.Itoa(params.Limit))
 	}
 
-	if len(v) > 0 {
-		uri += "?" + v.Encode()
+	if params.AfterID != "" {
+		v.Set("after", params.AfterID)
 	}
+	if params.BeforeID != "" {
+		v.Set("before", params.BeforeID)
+	}
+
+	uri += "?" + v.Encode()
 
 	body, err := s.RequestWithBucketID("GET", uri, nil, EndpointMessageReaction(channelID, "", "", ""), options...)
 	if err != nil {

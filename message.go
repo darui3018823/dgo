@@ -637,9 +637,38 @@ const (
 
 // MessageReactions holds a reactions object for a message.
 type MessageReactions struct {
-	Count int    `json:"count"`
-	Me    bool   `json:"me"`
-	Emoji *Emoji `json:"emoji"`
+	Count        int                   `json:"count"`
+	CountDetails *ReactionCountDetails `json:"count_details"`
+	Me           bool                  `json:"me"`
+	MeBurst      bool                  `json:"me_burst"`
+	Emoji        *Emoji                `json:"emoji"`
+	BurstColors  []string              `json:"burst_colors"`
+}
+
+// ReactionCountDetails separates normal and burst reaction counts.
+type ReactionCountDetails struct {
+	Burst  int `json:"burst"`
+	Normal int `json:"normal"`
+}
+
+// ReactionType identifies the kind of reaction returned by the reactions endpoint.
+type ReactionType int
+
+// Known reaction types.
+const (
+	ReactionTypeNormal ReactionType = 0
+	ReactionTypeBurst  ReactionType = 1
+)
+
+// MessageReactionsParams controls pagination and reaction type for MessageReactionsComplex.
+type MessageReactionsParams struct {
+	Type    ReactionType
+	Limit   int
+	AfterID string
+
+	// BeforeID is retained for compatibility with Discord's former pagination contract.
+	// Current Discord documentation only guarantees forward pagination with AfterID.
+	BeforeID string
 }
 
 // MessageActivity is sent with Rich Presence-related chat embeds

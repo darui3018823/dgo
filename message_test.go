@@ -6,6 +6,56 @@ import (
 	"testing"
 )
 
+func TestMessageReactionDetails(t *testing.T) {
+	var message Message
+	if err := json.Unmarshal([]byte(`{
+		"reactions":[{
+			"count":3,
+			"count_details":{"burst":1,"normal":2},
+			"me":true,
+			"me_burst":true,
+			"emoji":{"id":null,"name":"🔥"},
+			"burst_colors":["#FF0000","#00FF00"]
+		}]
+	}`), &message); err != nil {
+		t.Fatal(err)
+	}
+	if len(message.Reactions) != 1 {
+		t.Fatalf("reactions = %d", len(message.Reactions))
+	}
+	reaction := message.Reactions[0]
+	if reaction.CountDetails == nil ||
+		reaction.CountDetails.Burst != 1 ||
+		reaction.CountDetails.Normal != 2 ||
+		!reaction.MeBurst ||
+		len(reaction.BurstColors) != 2 {
+		t.Fatalf("unexpected reaction: %#v", reaction)
+	}
+}
+
+func TestGatewayMessageReactionBurstFields(t *testing.T) {
+	var reaction MessageReactionAdd
+	if err := json.Unmarshal([]byte(`{
+		"user_id":"reactor",
+		"message_id":"message",
+		"message_author_id":"author",
+		"channel_id":"channel",
+		"emoji":{"name":"🔥"},
+		"burst":true,
+		"burst_colors":["#FF0000"],
+		"type":1
+	}`), &reaction); err != nil {
+		t.Fatal(err)
+	}
+	if reaction.MessageReaction == nil ||
+		reaction.MessageAuthorID != "author" ||
+		!reaction.Burst ||
+		reaction.Type != ReactionTypeBurst ||
+		len(reaction.BurstColors) != 1 {
+		t.Fatalf("unexpected gateway reaction: %#v", reaction.MessageReaction)
+	}
+}
+
 func TestDefaultAllowedMentionsDisableParsing(t *testing.T) {
 	s, err := New("Bot token")
 	if err != nil {

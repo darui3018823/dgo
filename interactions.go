@@ -30,6 +30,17 @@ const (
 	UserApplicationCommand ApplicationCommandType = 2
 	// MessageApplicationCommand adds command to message context menu.
 	MessageApplicationCommand ApplicationCommandType = 3
+	// PrimaryEntryPointApplicationCommand launches or invokes an application's Activity.
+	PrimaryEntryPointApplicationCommand ApplicationCommandType = 4
+)
+
+// ApplicationCommandHandlerType controls who handles a primary entry point command.
+type ApplicationCommandHandlerType uint8
+
+// Primary entry point command handler types.
+const (
+	ApplicationCommandHandlerApp                   ApplicationCommandHandlerType = 1
+	ApplicationCommandHandlerDiscordLaunchActivity ApplicationCommandHandlerType = 2
 )
 
 // ApplicationCommand represents an application's slash command.
@@ -48,9 +59,10 @@ type ApplicationCommand struct {
 	NSFW                     *bool  `json:"nsfw,omitempty"`
 
 	// Deprecated: use Contexts instead.
-	DMPermission     *bool                         `json:"dm_permission,omitempty"`
-	Contexts         *[]InteractionContextType     `json:"contexts,omitempty"`
-	IntegrationTypes *[]ApplicationIntegrationType `json:"integration_types,omitempty"`
+	DMPermission     *bool                          `json:"dm_permission,omitempty"`
+	Contexts         *[]InteractionContextType      `json:"contexts,omitempty"`
+	IntegrationTypes *[]ApplicationIntegrationType  `json:"integration_types,omitempty"`
+	Handler          *ApplicationCommandHandlerType `json:"handler,omitempty"`
 
 	// NOTE: Chat commands only. Otherwise it mustn't be set.
 
@@ -591,6 +603,8 @@ const (
 	InteractionApplicationCommandAutocompleteResult InteractionResponseType = 8
 	// InteractionResponseModal is for responding to an interaction with a modal window.
 	InteractionResponseModal InteractionResponseType = 9
+	// InteractionResponseLaunchActivity launches the Activity associated with the application.
+	InteractionResponseLaunchActivity InteractionResponseType = 12
 )
 
 // InteractionResponse represents a response for an interaction event.

@@ -2288,6 +2288,32 @@ type Activity struct {
 	Flags         int          `json:"flags,omitempty"`
 }
 
+// ApplicationActivityLocationKind identifies where an Activity instance runs.
+type ApplicationActivityLocationKind string
+
+// Application Activity location kinds.
+const (
+	ApplicationActivityLocationGuildChannel   ApplicationActivityLocationKind = "gc"
+	ApplicationActivityLocationPrivateChannel ApplicationActivityLocationKind = "pc"
+)
+
+// ApplicationActivityLocation describes where an Activity instance runs.
+type ApplicationActivityLocation struct {
+	ID        string                          `json:"id"`
+	Kind      ApplicationActivityLocationKind `json:"kind"`
+	ChannelID string                          `json:"channel_id"`
+	GuildID   *string                         `json:"guild_id,omitempty"`
+}
+
+// ApplicationActivityInstance describes a currently running Activity.
+type ApplicationActivityInstance struct {
+	ApplicationID string                      `json:"application_id"`
+	InstanceID    string                      `json:"instance_id"`
+	LaunchID      string                      `json:"launch_id"`
+	Location      ApplicationActivityLocation `json:"location"`
+	Users         []string                    `json:"users"`
+}
+
 // UnmarshalJSON is a custom unmarshaljson to make CreatedAt a time.Time instead of an int
 func (activity *Activity) UnmarshalJSON(b []byte) error {
 	temp := struct {

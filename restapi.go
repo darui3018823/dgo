@@ -1676,6 +1676,20 @@ func (s *Session) ApplicationEmojiDelete(appID, emojiID string, options ...Reque
 	return
 }
 
+// ApplicationActivityInstance returns a serialized Activity instance.
+func (s *Session) ApplicationActivityInstance(appID, instanceID string, options ...RequestOption) (*ApplicationActivityInstance, error) {
+	endpoint := EndpointApplicationActivityInstance(appID, instanceID)
+	body, err := s.RequestWithBucketID("GET", endpoint, nil, EndpointApplicationActivityInstance(appID, ""), options...)
+	if err != nil {
+		return nil, err
+	}
+	instance := &ApplicationActivityInstance{}
+	if err = unmarshal(body, instance); err != nil {
+		return nil, err
+	}
+	return instance, nil
+}
+
 // GuildTemplate returns a GuildTemplate for the given code
 // templateCode: The Code of a GuildTemplate
 func (s *Session) GuildTemplate(templateCode string, options ...RequestOption) (st *GuildTemplate, err error) {

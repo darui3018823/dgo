@@ -3,6 +3,7 @@ package dgo
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -463,6 +464,64 @@ func TestChannelVoiceStatusUpdate(t *testing.T) {
 	}
 	if requests != 2 {
 		t.Fatalf("requests = %d, want 2", requests)
+	}
+}
+
+func TestApplicationActivityInstance(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodGet {
+			t.Errorf("method = %q", request.Method)
+		}
+		if request.URL.Path != "/api/v10/applications/app/activity-instances/i-123" {
+			t.Errorf("path = %q", request.URL.Path)
+		}
+		return jsonResponse(http.StatusOK, `{
+			"application_id":"app",
+			"instance_id":"i-123",
+			"launch_id":"launch",
+			"location":{"id":"gc-1-2","kind":"gc","channel_id":"2","guild_id":"1"},
+			"users":["user"]
+		}`), nil
+	})
+
+	instance, err := session.ApplicationActivityInstance("app", "i-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if instance.InstanceID != "i-123" || instance.Location.Kind != ApplicationActivityLocationGuildChannel {
+		t.Fatalf("instance = %#v", instance)
+	}
+	if instance.Location.GuildID == nil || *instance.Location.GuildID != "1" {
+		t.Fatalf("guild ID = %#v", instance.Location.GuildID)
+	}
+}
+
+func TestPrimaryEntryPointAndLaunchActivityPayloads(t *testing.T) {
+	handler := ApplicationCommandHandlerDiscordLaunchActivity
+	command := &ApplicationCommand{
+		Type:        PrimaryEntryPointApplicationCommand,
+		Name:        "launch",
+		Description: "Launch the Activity",
+		Handler:     &handler,
+	}
+	commandJSON, err := json.Marshal(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(commandJSON), `"type":4`) || !strings.Contains(string(commandJSON), `"handler":2`) {
+		t.Fatalf("command JSON = %s", commandJSON)
+	}
+
+	responseJSON, err := json.Marshal(&InteractionResponse{Type: InteractionResponseLaunchActivity})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(responseJSON) != `{"type":12}` {
+		t.Fatalf("response JSON = %s", responseJSON)
 	}
 }
 

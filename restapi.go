@@ -34,7 +34,7 @@ import (
 // All error constants
 var (
 	ErrJSONUnmarshal                       = errors.New("json unmarshal")
-	ErrStatusOffline                       = errors.New("You can't set your Status to offline")
+	ErrStatusOffline                       = errors.New("you can't set your status to offline")
 	ErrVerificationLevelBounds             = errors.New("VerificationLevel out of bounds, should be between 0 and 3")
 	ErrPruneDaysBounds                     = errors.New("the number of days should be more than or equal to 1")
 	ErrGuildNoIcon                         = errors.New("guild does not have an icon set")

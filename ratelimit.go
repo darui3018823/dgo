@@ -35,7 +35,7 @@ var (
 	// ErrInvalidRequestLimit is returned when Discord's invalid-request
 	// threshold has been reached. Requests are blocked until the rolling
 	// invalid-request window has room again.
-	ErrInvalidRequestLimit = errors.New("Discord invalid-request limit reached")
+	ErrInvalidRequestLimit = errors.New("discord invalid-request limit reached")
 )
 
 // RateLimitScope describes how Discord applies a REST rate-limit bucket.

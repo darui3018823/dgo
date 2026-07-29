@@ -947,6 +947,10 @@ type Guild struct {
 	// A list of the custom stickers present in the guild.
 	Stickers []*Sticker `json:"stickers"`
 
+	// A list of soundboard sounds in the guild.
+	// This field is present in Guild Create events.
+	SoundboardSounds []*SoundboardSound `json:"soundboard_sounds"`
+
 	// A list of the members in the guild.
 	// This field is only present in GUILD_CREATE events and websocket
 	// update events, and thus is only present in state-cached guilds.

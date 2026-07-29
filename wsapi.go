@@ -210,6 +210,7 @@ func (s *Session) OpenWithContext(ctx context.Context) error {
 		state.TrackEmojis = false
 		state.TrackMembers = false
 		state.TrackRoles = false
+		state.TrackSoundboardSounds = false
 		state.TrackVoice = false
 		s.State = state
 	}
@@ -616,6 +617,41 @@ type requestChannelInfoData struct {
 type requestChannelInfoOp struct {
 	Op   int                    `json:"op"`
 	Data requestChannelInfoData `json:"d"`
+}
+
+type requestSoundboardSoundsData struct {
+	GuildIDs []string `json:"guild_ids"`
+}
+
+type requestSoundboardSoundsOp struct {
+	Op   int                         `json:"op"`
+	Data requestSoundboardSoundsData `json:"d"`
+}
+
+// RequestSoundboardSounds requests the soundboard sounds for one or more
+// guilds. Discord responds with one SoundboardSounds event per guild.
+func (s *Session) RequestSoundboardSounds(guildIDs []string) error {
+	if len(guildIDs) == 0 {
+		return errors.New("at least one guild ID is required")
+	}
+
+	seen := make(map[string]struct{}, len(guildIDs))
+	for _, guildID := range guildIDs {
+		if strings.TrimSpace(guildID) == "" {
+			return errors.New("soundboard sound request guild IDs must not be empty")
+		}
+		if _, exists := seen[guildID]; exists {
+			return fmt.Errorf("soundboard sound request guild ID %q is duplicated", guildID)
+		}
+		seen[guildID] = struct{}{}
+	}
+
+	return s.GatewayWriteStruct(requestSoundboardSoundsOp{
+		Op: 31,
+		Data: requestSoundboardSoundsData{
+			GuildIDs: append([]string(nil), guildIDs...),
+		},
+	})
 }
 
 // RequestChannelInfo requests ephemeral voice channel information for a guild.

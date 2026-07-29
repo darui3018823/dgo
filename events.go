@@ -215,6 +215,38 @@ type GuildStickersUpdate struct {
 	Stickers []*Sticker `json:"stickers"`
 }
 
+// GuildSoundboardSoundCreate is the data for a Guild Soundboard Sound Create
+// event.
+type GuildSoundboardSoundCreate struct {
+	*SoundboardSound
+}
+
+// GuildSoundboardSoundUpdate is the data for a Guild Soundboard Sound Update
+// event.
+type GuildSoundboardSoundUpdate struct {
+	*SoundboardSound
+}
+
+// GuildSoundboardSoundDelete is the data for a Guild Soundboard Sound Delete
+// event.
+type GuildSoundboardSoundDelete struct {
+	SoundID string `json:"sound_id"`
+	GuildID string `json:"guild_id"`
+}
+
+// GuildSoundboardSoundsUpdate is the data for a Guild Soundboard Sounds Update
+// event.
+type GuildSoundboardSoundsUpdate struct {
+	SoundboardSounds []*SoundboardSound `json:"soundboard_sounds"`
+	GuildID          string             `json:"guild_id"`
+}
+
+// SoundboardSounds is the response to a Request Soundboard Sounds operation.
+type SoundboardSounds struct {
+	SoundboardSounds []*SoundboardSound `json:"soundboard_sounds"`
+	GuildID          string             `json:"guild_id"`
+}
+
 // A GuildMembersChunk is the data for a GuildMembersChunk event.
 type GuildMembersChunk struct {
 	GuildID    string      `json:"guild_id"`
@@ -414,6 +446,18 @@ type VoiceChannelStatusUpdate struct {
 	ID      string  `json:"id"`
 	GuildID string  `json:"guild_id"`
 	Status  *string `json:"status"`
+}
+
+// VoiceChannelEffectSend is the data for a Voice Channel Effect Send event.
+type VoiceChannelEffectSend struct {
+	ChannelID     string                           `json:"channel_id"`
+	GuildID       string                           `json:"guild_id"`
+	UserID        string                           `json:"user_id"`
+	Emoji         *Emoji                           `json:"emoji,omitempty"`
+	AnimationType *VoiceChannelEffectAnimationType `json:"animation_type,omitempty"`
+	AnimationID   *int64                           `json:"animation_id,omitempty"`
+	SoundID       *SoundboardSoundID               `json:"sound_id,omitempty"`
+	SoundVolume   *float64                         `json:"sound_volume,omitempty"`
 }
 
 // MessageDeleteBulk is the data for a MessageDeleteBulk event

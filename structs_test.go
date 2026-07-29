@@ -36,6 +36,25 @@ func TestIdentifyPropertiesUseCurrentFieldNames(t *testing.T) {
 	}
 }
 
+func TestApplicationIntegrationTypesConfigJSONTag(t *testing.T) {
+	data, err := json.Marshal(Application{
+		IntegrationTypesConfig: map[ApplicationIntegrationType]*ApplicationIntegrationTypeConfig{
+			ApplicationIntegrationGuildInstall: {},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := string(data)
+	if !strings.Contains(got, `"integration_types_config"`) {
+		t.Fatalf("application JSON missing integration_types_config: %s", got)
+	}
+	if strings.Contains(got, `"integration_types"`) {
+		t.Fatalf("application JSON contains obsolete integration_types key: %s", got)
+	}
+}
+
 func TestSticker_URL(t *testing.T) {
 	t.Run("png", func(t *testing.T) {
 		s := &Sticker{ID: "123", FormatType: StickerFormatTypePNG}

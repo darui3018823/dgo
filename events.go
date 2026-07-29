@@ -341,6 +341,16 @@ type MessageReactionRemoveAll struct {
 	*MessageReaction
 }
 
+// MessageReactionRemoveEmoji is the data for a Message Reaction Remove Emoji
+// event. It is dispatched when every reaction for one emoji is removed from a
+// message.
+type MessageReactionRemoveEmoji struct {
+	ChannelID string `json:"channel_id"`
+	MessageID string `json:"message_id"`
+	GuildID   string `json:"guild_id,omitempty"`
+	Emoji     Emoji  `json:"emoji"`
+}
+
 // PresencesReplace is the data for a PresencesReplace event.
 type PresencesReplace []*Presence
 

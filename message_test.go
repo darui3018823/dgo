@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestMessageReactionDetails(t *testing.T) {
@@ -53,6 +55,41 @@ func TestGatewayMessageReactionBurstFields(t *testing.T) {
 		reaction.Type != ReactionTypeBurst ||
 		len(reaction.BurstColors) != 1 {
 		t.Fatalf("unexpected gateway reaction: %#v", reaction.MessageReaction)
+	}
+}
+
+func TestGatewayMessageReactionRemoveEmojiEvent(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := session.onEvent(websocket.TextMessage, []byte(`{
+		"op":0,
+		"s":90,
+		"t":"MESSAGE_REACTION_REMOVE_EMOJI",
+		"d":{
+			"channel_id":"channel",
+			"message_id":"message",
+			"guild_id":"guild",
+			"emoji":{"id":"emoji","name":"party"}
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, ok := event.Struct.(*MessageReactionRemoveEmoji)
+	if !ok {
+		t.Fatalf("event struct = %T, want *MessageReactionRemoveEmoji", event.Struct)
+	}
+	if removed.ChannelID != "channel" ||
+		removed.MessageID != "message" ||
+		removed.GuildID != "guild" ||
+		removed.Emoji.ID != "emoji" ||
+		removed.Emoji.Name != "party" {
+		t.Fatalf("unexpected remove emoji event: %#v", removed)
+	}
+	if handlerForInterface(func(*Session, *MessageReactionRemoveEmoji) {}) == nil {
+		t.Fatal("typed MessageReactionRemoveEmoji handler was not generated")
 	}
 }
 

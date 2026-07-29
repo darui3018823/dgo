@@ -387,6 +387,58 @@ func TestNormalCloseInvalidatesResumeState(t *testing.T) {
 	}
 }
 
+func TestSessionCloseIsIdempotentAndClosesVoiceConnections(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	voiceClosed := make(chan struct{})
+	voice := &VoiceConnection{
+		Ready: true,
+		close: voiceClosed,
+	}
+	session.VoiceConnections = map[string]*VoiceConnection{"guild": voice}
+	session.listening = make(chan interface{})
+	session.SyncEvents = true
+
+	var disconnects atomic.Int32
+	session.AddHandler(func(*Session, *Disconnect) {
+		disconnects.Add(1)
+	})
+
+	if err = session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-voiceClosed:
+	default:
+		t.Fatal("Session.Close did not stop the Voice connection")
+	}
+	voice.RLock()
+	voiceReady := voice.Ready
+	voice.RUnlock()
+	if voiceReady {
+		t.Fatal("Voice connection remained ready after Session.Close")
+	}
+	session.RLock()
+	voiceCount := len(session.VoiceConnections)
+	session.RUnlock()
+	if voiceCount != 0 {
+		t.Fatalf("Session retained %d Voice connections after Close", voiceCount)
+	}
+	if got := disconnects.Load(); got != 1 {
+		t.Fatalf("Disconnect events = %d, want 1", got)
+	}
+
+	if err = session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := disconnects.Load(); got != 1 {
+		t.Fatalf("Disconnect events after second Close = %d, want 1", got)
+	}
+}
+
 func TestChannelVoiceJoinBeforeGatewayIsSafe(t *testing.T) {
 	session, err := New("Bot token")
 	if err != nil {

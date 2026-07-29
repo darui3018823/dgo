@@ -1316,15 +1316,17 @@ func (s *Session) reconnect() {
 	}
 }
 
-// Close closes a websocket and stops all listening/heartbeat goroutines.
-// TODO: Add support for Voice WS/UDP
+// Close closes the Gateway and every active Voice connection. It is
+// idempotent: an already closed Session does not emit another Disconnect
+// event.
 func (s *Session) Close() error {
-	return s.CloseWithCode(websocket.CloseNormalClosure)
+	err := s.CloseWithCode(websocket.CloseNormalClosure)
+	s.closeVoiceConnections()
+	return err
 }
 
 // CloseWithCode closes a websocket using the provided closeCode and stops all
 // listening/heartbeat goroutines.
-// TODO: Add support for Voice WS/UDP connections
 func (s *Session) CloseWithCode(closeCode int) (err error) {
 	err = s.closeGateway(closeCode, true)
 	if closeCode == websocket.CloseNormalClosure || closeCode == websocket.CloseGoingAway {
@@ -1338,6 +1340,7 @@ func (s *Session) closeGateway(closeCode int, sendCloseFrame bool) (err error) {
 	s.log(LogInformational, "called")
 	s.Lock()
 
+	hadConnection := s.DataReady || s.listening != nil || s.wsConn != nil
 	s.DataReady = false
 
 	if s.listening != nil {
@@ -1377,8 +1380,28 @@ func (s *Session) closeGateway(closeCode int, sendCloseFrame bool) (err error) {
 
 	s.Unlock()
 
-	s.log(LogInformational, "emit disconnect event")
-	s.handleEvent(disconnectEventType, &Disconnect{})
+	if hadConnection {
+		s.log(LogInformational, "emit disconnect event")
+		s.handleEvent(disconnectEventType, &Disconnect{})
+	}
 
 	return
+}
+
+func (s *Session) closeVoiceConnections() {
+	s.Lock()
+	voices := make([]*VoiceConnection, 0, len(s.VoiceConnections))
+	for _, voice := range s.VoiceConnections {
+		if voice != nil {
+			voices = append(voices, voice)
+		}
+	}
+	if s.VoiceConnections != nil {
+		s.VoiceConnections = make(map[string]*VoiceConnection)
+	}
+	s.Unlock()
+
+	for _, voice := range voices {
+		voice.Close()
+	}
 }

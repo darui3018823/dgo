@@ -61,7 +61,7 @@ func New(token string) (s *Session, err error) {
 	s.Identify.LargeThreshold = 250
 	s.Identify.Properties.OS = runtime.GOOS
 	s.Identify.Properties.Browser = "DiscordGo v" + VERSION
-	s.Identify.Intents = IntentsAllWithoutPrivileged
+	s.Identify.Intents = IntentsNone
 	s.Identify.Token = token
 	s.Token = token
 

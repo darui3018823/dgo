@@ -69,6 +69,26 @@ func TestNewToken(t *testing.T) {
 	}
 }
 
+func TestNewUsesMinimalIntents(t *testing.T) {
+	d, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Identify.Intents != IntentsNone {
+		t.Fatalf("default intents = %d, want IntentsNone", d.Identify.Intents)
+	}
+}
+
+func TestIntentAggregatesIncludePolls(t *testing.T) {
+	polls := IntentGuildMessagePolls | IntentDirectMessagePolls
+	if IntentsAllWithoutPrivileged&polls != polls {
+		t.Fatal("IntentsAllWithoutPrivileged does not include poll intents")
+	}
+	if IntentsAll&polls != polls {
+		t.Fatal("IntentsAll does not include poll intents")
+	}
+}
+
 func TestOpenClose(t *testing.T) {
 	if envOAuth2Token == "" {
 		t.Skip("Skipping TestClose, DGU_TOKEN not set")

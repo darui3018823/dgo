@@ -3073,6 +3073,8 @@ const (
 	IntentsDirectMessageTyping    Intent = 1 << 14
 	IntentsMessageContent         Intent = 1 << 15
 	IntentsGuildScheduledEvents   Intent = 1 << 16
+	IntentsGuildMessagePolls      Intent = 1 << 24
+	IntentsDirectMessagePolls     Intent = 1 << 25
 
 	IntentsAllWithoutPrivileged = IntentGuilds |
 		IntentGuildBans |
@@ -3089,7 +3091,9 @@ const (
 		IntentDirectMessageTyping |
 		IntentGuildScheduledEvents |
 		IntentAutoModerationConfiguration |
-		IntentAutoModerationExecution
+		IntentAutoModerationExecution |
+		IntentGuildMessagePolls |
+		IntentDirectMessagePolls
 
 	IntentsAll = IntentsAllWithoutPrivileged |
 		IntentGuildMembers |

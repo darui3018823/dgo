@@ -172,8 +172,9 @@ type ApplicationEventWebhookStatus int
 
 // Application event webhook statuses.
 const (
-	ApplicationEventWebhooksDisabled ApplicationEventWebhookStatus = 1
-	ApplicationEventWebhooksEnabled  ApplicationEventWebhookStatus = 2
+	ApplicationEventWebhooksDisabled          ApplicationEventWebhookStatus = 1
+	ApplicationEventWebhooksEnabled           ApplicationEventWebhookStatus = 2
+	ApplicationEventWebhooksDisabledByDiscord ApplicationEventWebhookStatus = 3
 )
 
 // ApplicationEdit contains mutable fields for the current application.
@@ -195,25 +196,40 @@ type ApplicationEdit struct {
 
 // Application stores values for a Discord Application
 type Application struct {
-	ID                     string                                                           `json:"id,omitempty"`
-	Name                   string                                                           `json:"name"`
-	Icon                   string                                                           `json:"icon,omitempty"`
-	Description            string                                                           `json:"description,omitempty"`
-	RPCOrigins             []string                                                         `json:"rpc_origins,omitempty"`
-	BotPublic              bool                                                             `json:"bot_public,omitempty"`
-	BotRequireCodeGrant    bool                                                             `json:"bot_require_code_grant,omitempty"`
-	TermsOfServiceURL      string                                                           `json:"terms_of_service_url"`
-	PrivacyProxyURL        string                                                           `json:"privacy_policy_url"`
-	Owner                  *User                                                            `json:"owner"`
-	Summary                string                                                           `json:"summary"`
-	VerifyKey              string                                                           `json:"verify_key"`
-	Team                   *Team                                                            `json:"team"`
-	GuildID                string                                                           `json:"guild_id"`
-	PrimarySKUID           string                                                           `json:"primary_sku_id"`
-	Slug                   string                                                           `json:"slug"`
-	CoverImage             string                                                           `json:"cover_image"`
-	Flags                  int                                                              `json:"flags,omitempty"`
-	IntegrationTypesConfig map[ApplicationIntegrationType]*ApplicationIntegrationTypeConfig `json:"integration_types_config,omitempty"`
+	ID                                string                                                           `json:"id,omitempty"`
+	Name                              string                                                           `json:"name"`
+	Icon                              string                                                           `json:"icon,omitempty"`
+	Description                       string                                                           `json:"description,omitempty"`
+	RPCOrigins                        []string                                                         `json:"rpc_origins,omitempty"`
+	BotPublic                         bool                                                             `json:"bot_public,omitempty"`
+	BotRequireCodeGrant               bool                                                             `json:"bot_require_code_grant,omitempty"`
+	Bot                               *User                                                            `json:"bot,omitempty"`
+	TermsOfServiceURL                 string                                                           `json:"terms_of_service_url"`
+	PrivacyProxyURL                   string                                                           `json:"privacy_policy_url"`
+	Owner                             *User                                                            `json:"owner"`
+	Summary                           string                                                           `json:"summary"`
+	VerifyKey                         string                                                           `json:"verify_key"`
+	Team                              *Team                                                            `json:"team"`
+	GuildID                           string                                                           `json:"guild_id"`
+	Guild                             *Guild                                                           `json:"guild,omitempty"`
+	PrimarySKUID                      string                                                           `json:"primary_sku_id"`
+	Slug                              string                                                           `json:"slug"`
+	CoverImage                        string                                                           `json:"cover_image"`
+	Flags                             int                                                              `json:"flags,omitempty"`
+	FlagsNew                          string                                                           `json:"flags_new,omitempty"`
+	ApproximateGuildCount             *int                                                             `json:"approximate_guild_count,omitempty"`
+	ApproximateUserInstallCount       *int                                                             `json:"approximate_user_install_count,omitempty"`
+	ApproximateUserAuthorizationCount *int                                                             `json:"approximate_user_authorization_count,omitempty"`
+	RedirectURIs                      []string                                                         `json:"redirect_uris,omitempty"`
+	InteractionsEndpointURL           *string                                                          `json:"interactions_endpoint_url,omitempty"`
+	RoleConnectionsVerificationURL    *string                                                          `json:"role_connections_verification_url,omitempty"`
+	EventWebhooksURL                  *string                                                          `json:"event_webhooks_url,omitempty"`
+	EventWebhooksStatus               ApplicationEventWebhookStatus                                    `json:"event_webhooks_status,omitempty"`
+	EventWebhooksTypes                []string                                                         `json:"event_webhooks_types,omitempty"`
+	Tags                              []string                                                         `json:"tags,omitempty"`
+	InstallParams                     *ApplicationInstallParams                                        `json:"install_params,omitempty"`
+	IntegrationTypesConfig            map[ApplicationIntegrationType]*ApplicationIntegrationTypeConfig `json:"integration_types_config,omitempty"`
+	CustomInstallURL                  string                                                           `json:"custom_install_url,omitempty"`
 }
 
 // ApplicationRoleConnectionMetadataType represents the type of application role connection metadata.

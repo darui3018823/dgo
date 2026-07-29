@@ -55,6 +55,61 @@ func TestApplicationIntegrationTypesConfigJSONTag(t *testing.T) {
 	}
 }
 
+func TestApplicationCurrentFields(t *testing.T) {
+	payload := []byte(`{
+		"id":"app",
+		"name":"dgo",
+		"bot":{"id":"bot","username":"dgo"},
+		"guild_id":"guild",
+		"guild":{"id":"guild","name":"support"},
+		"flags":8192,
+		"flags_new":"4294975488",
+		"approximate_guild_count":42,
+		"approximate_user_install_count":13,
+		"approximate_user_authorization_count":21,
+		"redirect_uris":["https://example.com/callback"],
+		"interactions_endpoint_url":"https://example.com/interactions",
+		"role_connections_verification_url":null,
+		"event_webhooks_url":"https://example.com/events",
+		"event_webhooks_status":3,
+		"event_webhooks_types":["APPLICATION_AUTHORIZED"],
+		"tags":["utility"],
+		"install_params":{"scopes":["bot"],"permissions":"2048"},
+		"integration_types_config":{"0":{"oauth2_install_params":{"scopes":["bot"],"permissions":"2048"}}},
+		"custom_install_url":"https://example.com/install"
+	}`)
+
+	var application Application
+	if err := json.Unmarshal(payload, &application); err != nil {
+		t.Fatal(err)
+	}
+	if application.Bot == nil || application.Bot.ID != "bot" {
+		t.Fatalf("unexpected application bot: %#v", application.Bot)
+	}
+	if application.Guild == nil || application.Guild.ID != "guild" {
+		t.Fatalf("unexpected application guild: %#v", application.Guild)
+	}
+	if application.FlagsNew != "4294975488" {
+		t.Fatalf("FlagsNew = %q", application.FlagsNew)
+	}
+	if application.ApproximateGuildCount == nil || *application.ApproximateGuildCount != 42 ||
+		application.ApproximateUserInstallCount == nil || *application.ApproximateUserInstallCount != 13 ||
+		application.ApproximateUserAuthorizationCount == nil || *application.ApproximateUserAuthorizationCount != 21 {
+		t.Fatalf("unexpected approximate counts: %#v", application)
+	}
+	if application.InteractionsEndpointURL == nil ||
+		*application.InteractionsEndpointURL != "https://example.com/interactions" ||
+		application.RoleConnectionsVerificationURL != nil ||
+		application.EventWebhooksStatus != ApplicationEventWebhooksDisabledByDiscord {
+		t.Fatalf("unexpected application URLs/status: %#v", application)
+	}
+	if application.InstallParams == nil ||
+		application.InstallParams.Permissions != 2048 ||
+		application.IntegrationTypesConfig[ApplicationIntegrationGuildInstall] == nil {
+		t.Fatalf("unexpected install configuration: %#v", application)
+	}
+}
+
 func TestCurrentPermissionConstantsAndAggregates(t *testing.T) {
 	if PermissionSetVoiceChannelStatus != 1<<48 {
 		t.Fatalf("PermissionSetVoiceChannelStatus = %#x", PermissionSetVoiceChannelStatus)

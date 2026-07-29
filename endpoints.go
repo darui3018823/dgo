@@ -23,17 +23,18 @@ var (
 	EndpointSmActive   = EndpointSm + "active.json"
 	EndpointSmUpcoming = EndpointSm + "upcoming.json"
 
-	EndpointDiscord        = "https://discord.com/"
-	EndpointAPI            = EndpointDiscord + "api/v" + APIVersion + "/"
-	EndpointGuilds         = EndpointAPI + "guilds/"
-	EndpointChannels       = EndpointAPI + "channels/"
-	EndpointUsers          = EndpointAPI + "users/"
-	EndpointGateway        = EndpointAPI + "gateway"
-	EndpointGatewayBot     = EndpointGateway + "/bot"
-	EndpointWebhooks       = EndpointAPI + "webhooks/"
-	EndpointStickers       = EndpointAPI + "stickers/"
-	EndpointStageInstances = EndpointAPI + "stage-instances"
-	EndpointSKUs           = EndpointAPI + "skus"
+	EndpointDiscord                 = "https://discord.com/"
+	EndpointAPI                     = EndpointDiscord + "api/v" + APIVersion + "/"
+	EndpointGuilds                  = EndpointAPI + "guilds/"
+	EndpointChannels                = EndpointAPI + "channels/"
+	EndpointUsers                   = EndpointAPI + "users/"
+	EndpointGateway                 = EndpointAPI + "gateway"
+	EndpointGatewayBot              = EndpointGateway + "/bot"
+	EndpointWebhooks                = EndpointAPI + "webhooks/"
+	EndpointStickers                = EndpointAPI + "stickers/"
+	EndpointStageInstances          = EndpointAPI + "stage-instances"
+	EndpointSoundboardDefaultSounds = EndpointAPI + "soundboard-default-sounds"
+	EndpointSKUs                    = EndpointAPI + "skus"
 
 	EndpointCDN             = "https://cdn.discordapp.com/"
 	EndpointCDNAttachments  = EndpointCDN + "attachments/"
@@ -110,6 +111,8 @@ var (
 	EndpointGuildBannerAnimated      = func(gID, hash string) string { return EndpointCDNBanners + gID + "/" + hash + ".gif" }
 	EndpointGuildStickers            = func(gID string) string { return EndpointGuilds + gID + "/stickers" }
 	EndpointGuildSticker             = func(gID, sID string) string { return EndpointGuilds + gID + "/stickers/" + sID }
+	EndpointGuildSoundboardSounds    = func(gID string) string { return EndpointGuild(gID) + "/soundboard-sounds" }
+	EndpointGuildSoundboardSound     = func(gID, sID string) string { return EndpointGuildSoundboardSounds(gID) + "/" + sID }
 	EndpointStageInstance            = func(cID string) string { return EndpointStageInstances + "/" + cID }
 	EndpointGuildScheduledEvents     = func(gID string) string { return EndpointGuilds + gID + "/scheduled-events" }
 	EndpointGuildScheduledEvent      = func(gID, eID string) string { return EndpointGuilds + gID + "/scheduled-events/" + eID }
@@ -137,6 +140,7 @@ var (
 
 	EndpointChannel                             = func(cID string) string { return EndpointChannels + cID }
 	EndpointChannelVoiceStatus                  = func(cID string) string { return EndpointChannel(cID) + "/voice-status" }
+	EndpointChannelSoundboardSoundSend          = func(cID string) string { return EndpointChannel(cID) + "/send-soundboard-sound" }
 	EndpointChannelThreads                      = func(cID string) string { return EndpointChannel(cID) + "/threads" }
 	EndpointChannelActiveThreads                = func(cID string) string { return EndpointChannelThreads(cID) + "/active" }
 	EndpointChannelPublicArchivedThreads        = func(cID string) string { return EndpointChannelThreads(cID) + "/archived/public" }

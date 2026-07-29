@@ -802,6 +802,100 @@ func jsonResponse(status int, body string) *http.Response {
 	}
 }
 
+func TestGuildRoleColors(t *testing.T) {
+	var role Role
+	err := json.Unmarshal([]byte(`{
+		"id":"role",
+		"color":11127295,
+		"colors":{
+			"primary_color":11127295,
+			"secondary_color":16759788,
+			"tertiary_color":16761760
+		}
+	}`), &role)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if role.Colors.PrimaryColor != RoleHolographicPrimaryColor ||
+		role.Colors.SecondaryColor == nil ||
+		*role.Colors.SecondaryColor != RoleHolographicSecondaryColor ||
+		role.Colors.TertiaryColor == nil ||
+		*role.Colors.TertiaryColor != RoleHolographicTertiaryColor {
+		t.Fatalf("unexpected role colors: %#v", role.Colors)
+	}
+}
+
+func TestGuildRoleCreateAndEditSendColors(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requests := 0
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		var params RoleParams
+		if err := json.NewDecoder(request.Body).Decode(&params); err != nil {
+			t.Fatal(err)
+		}
+		if params.Colors == nil ||
+			params.Colors.PrimaryColor != 0x123456 ||
+			params.Colors.SecondaryColor == nil ||
+			*params.Colors.SecondaryColor != 0x654321 {
+			t.Fatalf("unexpected role params: %#v", params)
+		}
+		return jsonResponse(http.StatusOK, `{"id":"role","colors":{"primary_color":1193046,"secondary_color":6636321,"tertiary_color":null}}`), nil
+	})
+
+	secondary := 0x654321
+	params := &RoleParams{Colors: &RoleColors{
+		PrimaryColor:   0x123456,
+		SecondaryColor: &secondary,
+	}}
+	if _, err := session.GuildRoleCreate("guild", params); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.GuildRoleEdit("guild", "role", params); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+}
+
+func TestGuildRoleColorsValidation(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		t.Fatal("validation failure must not make a request")
+		return nil, nil
+	})
+
+	invalid := -1
+	if _, err := session.GuildRoleCreate("guild", &RoleParams{Color: &invalid}); err == nil {
+		t.Fatal("expected legacy color validation error")
+	}
+	tooLarge := 0x1000000
+	if _, err := session.GuildRoleEdit("guild", "role", &RoleParams{
+		Colors: &RoleColors{PrimaryColor: tooLarge},
+	}); err == nil {
+		t.Fatal("expected primary color validation error")
+	}
+	secondary := 0x654321
+	tertiary := 0xabcdef
+	if _, err := session.GuildRoleCreate("guild", &RoleParams{
+		Colors: &RoleColors{
+			PrimaryColor:   0x123456,
+			SecondaryColor: &secondary,
+			TertiaryColor:  &tertiary,
+		},
+	}); err == nil {
+		t.Fatal("expected holographic preset validation error")
+	}
+}
+
 func TestWithContext(t *testing.T) {
 	// Set up a test context.
 	type key struct{}

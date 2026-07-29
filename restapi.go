@@ -1312,6 +1312,10 @@ func (s *Session) GuildRoles(guildID string, options ...RequestOption) (st []*Ro
 // guildID : The ID of a Guild.
 // data    : New Role parameters.
 func (s *Session) GuildRoleCreate(guildID string, data *RoleParams, options ...RequestOption) (st *Role, err error) {
+	if err = validateRoleParams(data); err != nil {
+		return nil, err
+	}
+
 	body, err := s.RequestWithBucketID("POST", EndpointGuildRoles(guildID), data, EndpointGuildRoles(guildID), options...)
 	if err != nil {
 		return
@@ -1327,10 +1331,8 @@ func (s *Session) GuildRoleCreate(guildID string, data *RoleParams, options ...R
 // roleID    : The ID of a Role.
 // data 		 : Updated Role data.
 func (s *Session) GuildRoleEdit(guildID, roleID string, data *RoleParams, options ...RequestOption) (st *Role, err error) {
-
-	// Prevent sending a color int that is too big.
-	if data.Color != nil && *data.Color > 0xFFFFFF {
-		return nil, fmt.Errorf("color value cannot be larger than 0xFFFFFF")
+	if err = validateRoleParams(data); err != nil {
+		return nil, err
 	}
 
 	body, err := s.RequestWithBucketID("PATCH", EndpointGuildRole(guildID, roleID), data, EndpointGuildRole(guildID, ""), options...)
@@ -1341,6 +1343,54 @@ func (s *Session) GuildRoleEdit(guildID, roleID string, data *RoleParams, option
 	err = unmarshal(body, &st)
 
 	return
+}
+
+func validateRoleParams(data *RoleParams) error {
+	if data == nil {
+		return fmt.Errorf("role parameters cannot be nil")
+	}
+	if data.Color != nil {
+		if err := validateRoleColor("color", *data.Color); err != nil {
+			return err
+		}
+	}
+	if data.Colors == nil {
+		return nil
+	}
+
+	colors := data.Colors
+	if err := validateRoleColor("primary_color", colors.PrimaryColor); err != nil {
+		return err
+	}
+	if colors.SecondaryColor != nil {
+		if err := validateRoleColor("secondary_color", *colors.SecondaryColor); err != nil {
+			return err
+		}
+	}
+	if colors.TertiaryColor != nil {
+		if err := validateRoleColor("tertiary_color", *colors.TertiaryColor); err != nil {
+			return err
+		}
+		if colors.SecondaryColor == nil ||
+			colors.PrimaryColor != RoleHolographicPrimaryColor ||
+			*colors.SecondaryColor != RoleHolographicSecondaryColor ||
+			*colors.TertiaryColor != RoleHolographicTertiaryColor {
+			return fmt.Errorf(
+				"tertiary_color requires the holographic preset (%d, %d, %d)",
+				RoleHolographicPrimaryColor,
+				RoleHolographicSecondaryColor,
+				RoleHolographicTertiaryColor,
+			)
+		}
+	}
+	return nil
+}
+
+func validateRoleColor(name string, color int) error {
+	if color < 0 || color > 0xFFFFFF {
+		return fmt.Errorf("%s value must be between 0 and 0xFFFFFF", name)
+	}
+	return nil
 }
 
 // GuildRoleReorder reoders guild roles

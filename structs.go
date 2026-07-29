@@ -1470,7 +1470,11 @@ type Role struct {
 	Hoist bool `json:"hoist"`
 
 	// The hex color of this role.
+	// Deprecated: use Colors instead.
 	Color int `json:"color"`
+
+	// The colors of this role, including its optional gradient colors.
+	Colors RoleColors `json:"colors"`
 
 	// The position of this role in the guild's role hierarchy.
 	Position int `json:"position"`
@@ -1491,6 +1495,23 @@ type Role struct {
 	// be checked by performing a bitwise AND between this int and the flag.
 	Flags RoleFlags `json:"flags"`
 }
+
+// RoleColors represents the solid or gradient colors assigned to a role.
+type RoleColors struct {
+	// PrimaryColor is the base color of the role.
+	PrimaryColor int `json:"primary_color"`
+	// SecondaryColor is the optional second color in the role gradient.
+	SecondaryColor *int `json:"secondary_color"`
+	// TertiaryColor is the optional holographic preset color.
+	TertiaryColor *int `json:"tertiary_color"`
+}
+
+// Holographic role color preset values.
+const (
+	RoleHolographicPrimaryColor   = 11127295
+	RoleHolographicSecondaryColor = 16759788
+	RoleHolographicTertiaryColor  = 16761760
+)
 
 // RoleFlags represent the flags of a Role.
 // https://discord.com/developers/docs/topics/permissions#role-object-role-flags
@@ -1528,8 +1549,11 @@ func (r *Role) IconURL(size string) string {
 type RoleParams struct {
 	// The role's name
 	Name string `json:"name,omitempty"`
-	// The color the role should have (as a decimal, not hex)
+	// The color the role should have (as a decimal, not hex).
+	// Deprecated: use Colors instead.
 	Color *int `json:"color,omitempty"`
+	// The solid or gradient colors the role should have.
+	Colors *RoleColors `json:"colors,omitempty"`
 	// Whether to display the role's users separately
 	Hoist *bool `json:"hoist,omitempty"`
 	// The overall permissions number of the role

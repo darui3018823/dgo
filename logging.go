@@ -10,8 +10,10 @@
 package dgo
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"runtime"
 	"strings"
 )
@@ -36,6 +38,88 @@ const (
 
 // Logger can be used to replace the standard logging for discordgo
 var Logger func(msgL, caller int, format string, a ...interface{})
+
+const redactedValue = "[REDACTED]"
+
+func isSensitiveLogKey(key string) bool {
+	key = strings.ToLower(strings.ReplaceAll(key, "-", "_"))
+	return strings.Contains(key, "token") ||
+		strings.Contains(key, "secret") ||
+		key == "authorization" ||
+		key == "session_id" ||
+		key == "code"
+}
+
+func redactJSONValue(value interface{}) interface{} {
+	switch value := value.(type) {
+	case map[string]interface{}:
+		for key, item := range value {
+			if isSensitiveLogKey(key) {
+				value[key] = redactedValue
+			} else {
+				value[key] = redactJSONValue(item)
+			}
+		}
+	case []interface{}:
+		for index, item := range value {
+			value[index] = redactJSONValue(item)
+		}
+	case string:
+		if parsed, err := url.Parse(value); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+			return sanitizeURL(value)
+		}
+	}
+	return value
+}
+
+func redactJSON(data []byte) string {
+	if len(data) == 0 {
+		return "<empty>"
+	}
+
+	var value interface{}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return "<redacted non-JSON payload>"
+	}
+	value = redactJSONValue(value)
+	redacted, err := json.Marshal(value)
+	if err != nil {
+		return "<redacted JSON payload>"
+	}
+	return string(redacted)
+}
+
+func sanitizeURL(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "<invalid URL>"
+	}
+	parsed.User = nil
+
+	segments := strings.Split(parsed.EscapedPath(), "/")
+	for index, segment := range segments {
+		switch strings.ToLower(segment) {
+		case "webhooks", "interactions":
+			tokenIndex := index + 2
+			if tokenIndex < len(segments) && segments[tokenIndex] != "" {
+				segments[tokenIndex] = redactedValue
+			}
+		}
+	}
+	parsed.RawPath = strings.Join(segments, "/")
+	if path, err := url.PathUnescape(parsed.RawPath); err == nil {
+		parsed.Path = path
+	}
+
+	query := parsed.Query()
+	for key := range query {
+		if isSensitiveLogKey(key) {
+			query.Set(key, redactedValue)
+		}
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
 
 // msglog provides package wide logging consistency for discordgo
 // the format, a...  portion this command follows that of fmt.Printf

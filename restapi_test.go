@@ -1,9 +1,13 @@
 package dgo
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
+	"log"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -254,6 +258,45 @@ func TestInviteAcceptIsUnsupported(t *testing.T) {
 	}
 	if !errors.Is(err, ErrInviteAcceptUnsupported) {
 		t.Fatalf("InviteAccept error = %v, want %v", err, ErrInviteAcceptUnsupported)
+	}
+}
+
+func TestRESTDebugLogRedactsCredentials(t *testing.T) {
+	session, err := New("Bot bot-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Debug = true
+	session.Client.Transport = roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusNoContent,
+			Status:     "204 No Content",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("")),
+		}, nil
+	})
+
+	previousWriter := log.Writer()
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	defer log.SetOutput(previousWriter)
+
+	_, err = session.Request(
+		http.MethodPost,
+		"https://discord.com/api/v10/webhooks/123/webhook-secret",
+		map[string]string{"token": "payload-secret"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := logs.String()
+	for _, secret := range []string{"bot-secret", "webhook-secret", "payload-secret"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("REST debug log leaked %q: %s", secret, got)
+		}
+	}
+	if !strings.Contains(got, "REDACTED") {
+		t.Fatalf("REST debug log has no redaction marker: %s", got)
 	}
 }
 

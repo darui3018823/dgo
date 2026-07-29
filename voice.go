@@ -385,7 +385,6 @@ func (v *VoiceConnection) open() (err error) {
 	v.wsConn, _, err = v.session.Dialer.Dial(vg, nil)
 	if err != nil {
 		v.log(LogWarning, "error connecting to voice endpoint %s, %s", vg, err)
-		v.log(LogDebug, "voice struct: %#v\n", v)
 		return
 	}
 
@@ -555,7 +554,7 @@ func (v *VoiceConnection) onEvent(isBinary bool, message []byte) {
 		return
 	}
 
-	v.log(LogDebug, "received: %s", string(message))
+	v.log(LogDebug, "received voice payload: %s", redactJSON(message))
 
 	var e voiceWebsocketMessage
 	if err := json.Unmarshal(message, &e); err != nil {
@@ -574,7 +573,7 @@ func (v *VoiceConnection) onEvent(isBinary bool, message []byte) {
 	case 2: // READY
 
 		if err := json.Unmarshal(e.RawData, &v.op2); err != nil {
-			v.log(LogError, "OP2 unmarshall error, %s, %s", err, string(e.RawData))
+			v.log(LogError, "OP2 unmarshal error: %s; data=%s", err, redactJSON(e.RawData))
 			return
 		}
 		if v.op8.HeartbeatInterval <= 0 {
@@ -625,7 +624,7 @@ func (v *VoiceConnection) onEvent(isBinary bool, message []byte) {
 		v.op4 = voiceOP4{}
 		if err := json.Unmarshal(e.RawData, &v.op4); err != nil {
 			v.Unlock()
-			v.log(LogError, "OP4 unmarshall error, %s, %s", err, string(e.RawData))
+			v.log(LogError, "OP4 unmarshal error: %s; data=%s", err, redactJSON(e.RawData))
 			return
 		}
 
@@ -699,7 +698,7 @@ func (v *VoiceConnection) onEvent(isBinary bool, message []byte) {
 	case 5:
 		voiceSpeakingUpdate := &VoiceSpeakingUpdate{}
 		if err := json.Unmarshal(e.RawData, voiceSpeakingUpdate); err != nil {
-			v.log(LogError, "OP5 unmarshall error, %s, %s", err, string(e.RawData))
+			v.log(LogError, "OP5 unmarshal error: %s; data=%s", err, redactJSON(e.RawData))
 			return
 		}
 
@@ -757,7 +756,7 @@ func (v *VoiceConnection) onEvent(isBinary bool, message []byte) {
 		return
 
 	case 13: // Client Disconnect
-		v.log(LogDebug, "user disconnected: %s", string(e.RawData))
+		v.log(LogDebug, "user disconnected: %s", redactJSON(e.RawData))
 		return
 
 	case 21: // DAVE prepare_transition
@@ -774,13 +773,13 @@ func (v *VoiceConnection) onEvent(isBinary bool, message []byte) {
 
 	case 8: // HELLO
 		if err := json.Unmarshal(e.RawData, &v.op8); err != nil {
-			v.log(LogError, "OP8 unmarshall error, %s, %s", err, string(e.RawData))
+			v.log(LogError, "OP8 unmarshal error: %s; data=%s", err, redactJSON(e.RawData))
 			return
 		}
 		return
 
 	default:
-		v.log(LogDebug, "unknown voice operation, %d, %s", e.Operation, string(e.RawData))
+		v.log(LogDebug, "unknown voice operation, %d, %s", e.Operation, redactJSON(e.RawData))
 	}
 
 	return
@@ -1094,7 +1093,6 @@ func (v *VoiceConnection) opusSender(udpConn *net.UDPConn, close <-chan struct{}
 
 		if err != nil {
 			v.log(LogError, "udp write error, %s", err)
-			v.log(LogDebug, "voice struct: %#v\n", v)
 			return
 		}
 
@@ -1140,7 +1138,6 @@ func (v *VoiceConnection) opusReceiver(udpConn *net.UDPConn, close <-chan struct
 			if sameConnection {
 
 				v.log(LogError, "udp read error, %s, %s", v.endpoint, err)
-				v.log(LogDebug, "voice struct: %#v\n", v)
 
 				go v.reconnect()
 			}

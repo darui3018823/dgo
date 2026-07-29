@@ -210,8 +210,8 @@ func (s *Session) RequestRaw(method, urlStr, contentType string, b []byte, bucke
 // RequestWithLockedBucket makes a request using a bucket that's already been locked
 func (s *Session) RequestWithLockedBucket(method, urlStr, contentType string, b []byte, bucket *Bucket, sequence int, options ...RequestOption) (response []byte, err error) {
 	if s.Debug {
-		log.Printf("API REQUEST %8s :: %s\n", method, urlStr)
-		log.Printf("API REQUEST  PAYLOAD :: [%s]\n", string(b))
+		log.Printf("API REQUEST %8s :: %s\n", method, sanitizeURL(urlStr))
+		log.Printf("API REQUEST  PAYLOAD :: [%s]\n", redactJSON(b))
 	}
 
 	req, err := http.NewRequest(method, urlStr, bytes.NewBuffer(b))
@@ -305,7 +305,7 @@ func (s *Session) RequestWithLockedBucket(method, urlStr, contentType string, b 
 		// Retry sending request if possible
 		if sequence < cfg.MaxRestRetries {
 
-			s.log(LogInformational, "%s Failed (%s), Retrying...", urlStr, resp.Status)
+			s.log(LogInformational, "%s Failed (%s), Retrying...", sanitizeURL(urlStr), resp.Status)
 			response, err = s.RequestWithLockedBucket(method, urlStr, contentType, b, s.Ratelimiter.LockBucketObject(bucket), sequence+1, options...)
 		} else {
 			err = fmt.Errorf("Exceeded Max retries HTTP %s, %s", resp.Status, response)
@@ -319,8 +319,8 @@ func (s *Session) RequestWithLockedBucket(method, urlStr, contentType string, b 
 		}
 
 		if cfg.ShouldRetryOnRateLimit {
-			s.log(LogInformational, "Rate Limiting %s, retry in %v", urlStr, rl.RetryAfter)
-			s.handleEvent(rateLimitEventType, &RateLimit{TooManyRequests: &rl, URL: urlStr})
+			s.log(LogInformational, "Rate Limiting %s, retry in %v", sanitizeURL(urlStr), rl.RetryAfter)
+			s.handleEvent(rateLimitEventType, &RateLimit{TooManyRequests: &rl, URL: sanitizeURL(urlStr)})
 
 			// Wait for the rate limit or context cancellation
 			select {
@@ -337,7 +337,7 @@ func (s *Session) RequestWithLockedBucket(method, urlStr, contentType string, b 
 
 			response, err = s.RequestWithLockedBucket(method, urlStr, contentType, b, bucket, sequence, options...)
 		} else {
-			err = &RateLimitError{&RateLimit{TooManyRequests: &rl, URL: urlStr}}
+			err = &RateLimitError{&RateLimit{TooManyRequests: &rl, URL: sanitizeURL(urlStr)}}
 		}
 	case http.StatusUnauthorized:
 		if strings.Index(s.Token, "Bot ") != 0 {

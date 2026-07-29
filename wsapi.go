@@ -199,9 +199,9 @@ func (s *Session) OpenWithContext(ctx context.Context) error {
 	}
 	if e.Type != `READY` && e.Type != `RESUMED` {
 		// This is not fatal, but it does not follow their API documentation.
-		s.log(LogWarning, "Expected READY/RESUMED, instead got:\n%#v\n", e)
+		s.log(LogWarning, "expected READY/RESUMED, got operation %d type %s", e.Operation, e.Type)
 	}
-	s.log(LogInformational, "First Packet:\n%#v\n", e)
+	s.log(LogInformational, "first gateway packet operation=%d sequence=%d type=%s", e.Operation, e.Sequence, e.Type)
 
 	s.log(LogInformational, "We are now connected to Discord, emitting connect event")
 	s.handleEvent(connectEventType, &Connect{})
@@ -608,7 +608,7 @@ func (s *Session) onEvent(messageType int, message []byte) (*Event, error) {
 		return e, err
 	}
 
-	s.log(LogDebug, "Op: %d, Seq: %d, Type: %s, Data: %s\n\n", e.Operation, e.Sequence, e.Type, string(e.RawData))
+	s.log(LogDebug, "Op: %d, Seq: %d, Type: %s, Data: %s", e.Operation, e.Sequence, e.Type, redactJSON(e.RawData))
 
 	// Ping request.
 	// Must respond with a heartbeat packet within 5 seconds
@@ -666,7 +666,7 @@ func (s *Session) onEvent(messageType int, message []byte) (*Event, error) {
 	if e.Operation != 0 {
 		// But we probably should be doing something with them.
 		// TEMP
-		s.log(LogWarning, "unknown Op: %d, Seq: %d, Type: %s, Data: %s, message: %s", e.Operation, e.Sequence, e.Type, string(e.RawData), string(message))
+		s.log(LogWarning, "unknown Op: %d, Seq: %d, Type: %s, Data: %s", e.Operation, e.Sequence, e.Type, redactJSON(e.RawData))
 		return e, nil
 	}
 
@@ -691,7 +691,7 @@ func (s *Session) onEvent(messageType int, message []byte) (*Event, error) {
 		// Either way, READY events must fire, even with errors.
 		s.handleEvent(e.Type, e.Struct)
 	} else {
-		s.log(LogWarning, "unknown event: Op: %d, Seq: %d, Type: %s, Data: %s", e.Operation, e.Sequence, e.Type, string(e.RawData))
+		s.log(LogDebug, "unknown event: Op: %d, Seq: %d, Type: %s, Data: %s", e.Operation, e.Sequence, e.Type, redactJSON(e.RawData))
 	}
 
 	// For legacy reasons, we send the raw event also, this could be useful for handling unknown events.
@@ -888,7 +888,7 @@ func (s *Session) identify() error {
 
 	// Send Identify packet to Discord
 	op := identifyOp{2, s.Identify}
-	s.log(LogDebug, "Identify Packet: \n%#v", op)
+	s.log(LogDebug, "sending identify packet with intents=%d shard=%v", s.Identify.Intents, s.Identify.Shard)
 	s.wsMutex.Lock()
 	err := s.wsConn.WriteJSON(op)
 	s.wsMutex.Unlock()

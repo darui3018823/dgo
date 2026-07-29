@@ -167,6 +167,32 @@ type ApplicationIntegrationTypeConfig struct {
 	OAuth2InstallParams *ApplicationInstallParams `json:"oauth2_install_params,omitempty"`
 }
 
+// ApplicationEventWebhookStatus controls application event webhooks.
+type ApplicationEventWebhookStatus int
+
+// Application event webhook statuses.
+const (
+	ApplicationEventWebhooksDisabled ApplicationEventWebhookStatus = 1
+	ApplicationEventWebhooksEnabled  ApplicationEventWebhookStatus = 2
+)
+
+// ApplicationEdit contains mutable fields for the current application.
+type ApplicationEdit struct {
+	CustomInstallURL               *string                                                           `json:"custom_install_url,omitempty"`
+	Description                    *string                                                           `json:"description,omitempty"`
+	RoleConnectionsVerificationURL *string                                                           `json:"role_connections_verification_url,omitempty"`
+	InstallParams                  *ApplicationInstallParams                                         `json:"install_params,omitempty"`
+	IntegrationTypesConfig         *map[ApplicationIntegrationType]*ApplicationIntegrationTypeConfig `json:"integration_types_config,omitempty"`
+	Flags                          *int                                                              `json:"flags,omitempty"`
+	Icon                           *string                                                           `json:"icon,omitempty"`
+	CoverImage                     *string                                                           `json:"cover_image,omitempty"`
+	InteractionsEndpointURL        *string                                                           `json:"interactions_endpoint_url,omitempty"`
+	Tags                           *[]string                                                         `json:"tags,omitempty"`
+	EventWebhooksURL               *string                                                           `json:"event_webhooks_url,omitempty"`
+	EventWebhooksStatus            *ApplicationEventWebhookStatus                                    `json:"event_webhooks_status,omitempty"`
+	EventWebhooksTypes             *[]string                                                         `json:"event_webhooks_types,omitempty"`
+}
+
 // Application stores values for a Discord Application
 type Application struct {
 	ID                     string                                                           `json:"id,omitempty"`

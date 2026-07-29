@@ -626,6 +626,103 @@ func TestGuildMessagesSearchIndexPending(t *testing.T) {
 	}
 }
 
+func TestRemovedPublicAPIRoutesFailWithoutRequests(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		t.Fatalf("removed API helper made request to %s", request.URL)
+		return nil, nil
+	})
+
+	if _, err = session.GuildCreate("guild"); !errors.Is(err, ErrGuildCreateUnsupported) {
+		t.Fatalf("GuildCreate error = %v", err)
+	}
+	if _, err = session.GuildCreateWithTemplate("template", "guild", ""); !errors.Is(err, ErrGuildCreateUnsupported) {
+		t.Fatalf("GuildCreateWithTemplate error = %v", err)
+	}
+	if _, err = session.ThreadsActive("channel"); !errors.Is(err, ErrChannelActiveThreadsUnsupported) {
+		t.Fatalf("ThreadsActive error = %v", err)
+	}
+	if err = session.GuildIntegrationCreate("guild", "type", "integration"); !errors.Is(err, ErrGuildIntegrationMutationUnsupported) {
+		t.Fatalf("GuildIntegrationCreate error = %v", err)
+	}
+	if err = session.GuildIntegrationEdit("guild", "integration", 0, 0, false); !errors.Is(err, ErrGuildIntegrationMutationUnsupported) {
+		t.Fatalf("GuildIntegrationEdit error = %v", err)
+	}
+	if err = session.ApplicationCommandPermissionsBatchEdit("app", "guild", nil); !errors.Is(err, ErrCommandPermissionsBatchUnsupported) {
+		t.Fatalf("ApplicationCommandPermissionsBatchEdit error = %v", err)
+	}
+	if _, err = session.Application("app"); !errors.Is(err, ErrOAuthApplicationCRUDUnsupported) {
+		t.Fatalf("Application error = %v", err)
+	}
+	if _, err = session.Applications(); !errors.Is(err, ErrOAuthApplicationCRUDUnsupported) {
+		t.Fatalf("Applications error = %v", err)
+	}
+	if _, err = session.ApplicationCreate(&Application{}); !errors.Is(err, ErrOAuthApplicationCRUDUnsupported) {
+		t.Fatalf("ApplicationCreate error = %v", err)
+	}
+	if _, err = session.ApplicationUpdate("app", &Application{}); !errors.Is(err, ErrOAuthApplicationCRUDUnsupported) {
+		t.Fatalf("ApplicationUpdate error = %v", err)
+	}
+	if err = session.ApplicationDelete("app"); !errors.Is(err, ErrOAuthApplicationCRUDUnsupported) {
+		t.Fatalf("ApplicationDelete error = %v", err)
+	}
+}
+
+func TestCurrentApplicationHelpers(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		if request.URL.Path != "/api/v10/applications/@me" {
+			t.Errorf("path = %q", request.URL.Path)
+		}
+		switch requests {
+		case 1:
+			if request.Method != http.MethodGet {
+				t.Errorf("method = %q, want GET", request.Method)
+			}
+			return jsonResponse(http.StatusOK, `{"id":"app","name":"before"}`), nil
+		case 2:
+			if request.Method != http.MethodPatch {
+				t.Errorf("method = %q, want PATCH", request.Method)
+			}
+			body, readErr := io.ReadAll(request.Body)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if !strings.Contains(string(body), `"description":"updated"`) {
+				t.Errorf("body = %s", body)
+			}
+			return jsonResponse(http.StatusOK, `{"id":"app","name":"after","description":"updated"}`), nil
+		default:
+			t.Fatalf("unexpected request %d", requests)
+			return nil, nil
+		}
+	})
+
+	application, err := session.CurrentApplication()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if application.ID != "app" || application.Name != "before" {
+		t.Fatalf("application = %#v", application)
+	}
+	description := "updated"
+	application, err = session.CurrentApplicationEdit(&ApplicationEdit{Description: &description})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if application.Description != "updated" {
+		t.Fatalf("updated application = %#v", application)
+	}
+}
+
 func TestEntitlementHelpersReturnResponses(t *testing.T) {
 	session, err := New("Bot token")
 	if err != nil {

@@ -33,14 +33,19 @@ import (
 
 // All error constants
 var (
-	ErrJSONUnmarshal           = errors.New("json unmarshal")
-	ErrStatusOffline           = errors.New("You can't set your Status to offline")
-	ErrVerificationLevelBounds = errors.New("VerificationLevel out of bounds, should be between 0 and 3")
-	ErrPruneDaysBounds         = errors.New("the number of days should be more than or equal to 1")
-	ErrGuildNoIcon             = errors.New("guild does not have an icon set")
-	ErrGuildNoSplash           = errors.New("guild does not have a splash set")
-	ErrUnauthorized            = errors.New("HTTP request was unauthorized. This could be because the provided token was not a bot token. Please add \"Bot \" to the start of your token. https://discord.com/developers/docs/reference#authentication-example-bot-token-authorization-header")
-	ErrInviteAcceptUnsupported = errors.New("accepting invites is not supported by Discord's public bot API; install bots through OAuth2 instead")
+	ErrJSONUnmarshal                       = errors.New("json unmarshal")
+	ErrStatusOffline                       = errors.New("You can't set your Status to offline")
+	ErrVerificationLevelBounds             = errors.New("VerificationLevel out of bounds, should be between 0 and 3")
+	ErrPruneDaysBounds                     = errors.New("the number of days should be more than or equal to 1")
+	ErrGuildNoIcon                         = errors.New("guild does not have an icon set")
+	ErrGuildNoSplash                       = errors.New("guild does not have a splash set")
+	ErrUnauthorized                        = errors.New("HTTP request was unauthorized. This could be because the provided token was not a bot token. Please add \"Bot \" to the start of your token. https://discord.com/developers/docs/reference#authentication-example-bot-token-authorization-header")
+	ErrInviteAcceptUnsupported             = errors.New("accepting invites is not supported by Discord's public bot API; install bots through OAuth2 instead")
+	ErrGuildCreateUnsupported              = errors.New("creating guilds is no longer supported for Discord applications")
+	ErrChannelActiveThreadsUnsupported     = errors.New("the channel active threads route is no longer supported; use GuildThreadsActive")
+	ErrGuildIntegrationMutationUnsupported = errors.New("creating and editing guild integrations is no longer supported by Discord's public API")
+	ErrCommandPermissionsBatchUnsupported  = errors.New("batch application command permission edits are disabled; edit commands individually")
+	ErrOAuthApplicationCRUDUnsupported     = errors.New("OAuth2 application CRUD routes are not part of Discord's public bot API; use CurrentApplication or CurrentApplicationEdit")
 )
 
 var (
@@ -823,21 +828,12 @@ func (s *Session) GuildPreview(guildID string, options ...RequestOption) (st *Gu
 	return
 }
 
-// GuildCreate creates a new Guild
+// GuildCreate formerly created a new guild.
+//
+// Deprecated: Discord applications can no longer create guilds.
 // name      : A name for the Guild (2-100 characters)
 func (s *Session) GuildCreate(name string, options ...RequestOption) (st *Guild, err error) {
-
-	data := struct {
-		Name string `json:"name"`
-	}{name}
-
-	body, err := s.RequestWithBucketID("POST", EndpointGuildCreate, data, EndpointGuildCreate, options...)
-	if err != nil {
-		return
-	}
-
-	err = unmarshal(body, &st)
-	return
+	return nil, ErrGuildCreateUnsupported
 }
 
 // GuildEdit edits a new Guild
@@ -1454,22 +1450,19 @@ func (s *Session) GuildIntegrations(guildID string, options ...RequestOption) (s
 	return
 }
 
-// GuildIntegrationCreate creates a Guild Integration.
+// GuildIntegrationCreate formerly created a Guild Integration.
+//
+// Deprecated: Discord removed this public API operation.
 // guildID          : The ID of a Guild.
 // integrationType  : The Integration type.
 // integrationID    : The ID of an integration.
 func (s *Session) GuildIntegrationCreate(guildID, integrationType, integrationID string, options ...RequestOption) (err error) {
-
-	data := struct {
-		Type string `json:"type"`
-		ID   string `json:"id"`
-	}{integrationType, integrationID}
-
-	_, err = s.RequestWithBucketID("POST", EndpointGuildIntegrations(guildID), data, EndpointGuildIntegrations(guildID), options...)
-	return
+	return ErrGuildIntegrationMutationUnsupported
 }
 
-// GuildIntegrationEdit edits a Guild Integration.
+// GuildIntegrationEdit formerly edited a Guild Integration.
+//
+// Deprecated: Discord removed this public API operation.
 // guildID              : The ID of a Guild.
 // integrationType      : The Integration type.
 // integrationID        : The ID of an integration.
@@ -1477,15 +1470,7 @@ func (s *Session) GuildIntegrationCreate(guildID, integrationType, integrationID
 // expireGracePeriod    : Period (in seconds) where the integration will ignore lapsed subscriptions.
 // enableEmoticons	    : Whether emoticons should be synced for this integration (twitch only currently).
 func (s *Session) GuildIntegrationEdit(guildID, integrationID string, expireBehavior, expireGracePeriod int, enableEmoticons bool, options ...RequestOption) (err error) {
-
-	data := struct {
-		ExpireBehavior    int  `json:"expire_behavior"`
-		ExpireGracePeriod int  `json:"expire_grace_period"`
-		EnableEmoticons   bool `json:"enable_emoticons"`
-	}{expireBehavior, expireGracePeriod, enableEmoticons}
-
-	_, err = s.RequestWithBucketID("PATCH", EndpointGuildIntegration(guildID, integrationID), data, EndpointGuildIntegration(guildID, ""), options...)
-	return
+	return ErrGuildIntegrationMutationUnsupported
 }
 
 // GuildIntegrationDelete removes the given integration from the Guild.
@@ -1865,24 +1850,14 @@ func (s *Session) GuildTemplate(templateCode string, options ...RequestOption) (
 	return
 }
 
-// GuildCreateWithTemplate creates a guild based on a GuildTemplate
+// GuildCreateWithTemplate formerly created a guild based on a GuildTemplate.
+//
+// Deprecated: Discord applications can no longer create guilds.
 // templateCode: The Code of a GuildTemplate
 // name: The name of the guild (2-100) characters
 // icon: base64 encoded 128x128 image for the guild icon
 func (s *Session) GuildCreateWithTemplate(templateCode, name, icon string, options ...RequestOption) (st *Guild, err error) {
-
-	data := struct {
-		Name string `json:"name"`
-		Icon string `json:"icon"`
-	}{name, icon}
-
-	body, err := s.RequestWithBucketID("POST", EndpointGuildTemplate(templateCode), data, EndpointGuildTemplate(templateCode), options...)
-	if err != nil {
-		return
-	}
-
-	err = unmarshal(body, &st)
-	return
+	return nil, ErrGuildCreateUnsupported
 }
 
 // GuildTemplates returns all of GuildTemplates
@@ -3254,16 +3229,11 @@ func (s *Session) ThreadMembers(threadID string, limit int, withMember bool, aft
 	return
 }
 
-// ThreadsActive returns all active threads for specified channel.
+// ThreadsActive formerly returned active threads for a channel.
+//
+// Deprecated: the API v10 channel route was removed; use GuildThreadsActive.
 func (s *Session) ThreadsActive(channelID string, options ...RequestOption) (threads *ThreadsList, err error) {
-	var body []byte
-	body, err = s.RequestWithBucketID("GET", EndpointChannelActiveThreads(channelID), nil, EndpointChannelActiveThreads(channelID), options...)
-	if err != nil {
-		return
-	}
-
-	err = unmarshal(body, &threads)
-	return
+	return nil, ErrChannelActiveThreadsUnsupported
 }
 
 // GuildThreadsActive returns all active threads for specified guild.
@@ -3525,17 +3495,14 @@ func (s *Session) ApplicationCommandPermissionsEdit(appID, guildID, cmdID string
 	return
 }
 
-// ApplicationCommandPermissionsBatchEdit edits the permissions of a batch of commands
+// ApplicationCommandPermissionsBatchEdit formerly edited permissions in a batch.
 // appID       : The Application ID
 // guildID     : The guild ID to batch edit commands of
 // permissions : A list of permissions paired with a command ID, guild ID, and application ID per application command
 //
-// NOTE: This endpoint has been disabled with updates to command permissions (Permissions v2). Please use ApplicationCommandPermissionsEdit instead.
+// Deprecated: this endpoint is disabled; use ApplicationCommandPermissionsEdit.
 func (s *Session) ApplicationCommandPermissionsBatchEdit(appID, guildID string, permissions []*GuildApplicationCommandPermissions, options ...RequestOption) (err error) {
-	endpoint := EndpointApplicationCommandsGuildPermissions(appID, guildID)
-
-	_, err = s.RequestWithBucketID("PUT", endpoint, permissions, endpoint, options...)
-	return
+	return ErrCommandPermissionsBatchUnsupported
 }
 
 // InteractionRespond creates the response to an interaction.

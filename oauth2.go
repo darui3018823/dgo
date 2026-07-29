@@ -9,6 +9,8 @@
 
 package dgo
 
+import "errors"
+
 // ------------------------------------------------------------------------------------------------
 // Code specific to Discord OAuth2 Applications
 // ------------------------------------------------------------------------------------------------
@@ -40,82 +42,74 @@ type Team struct {
 	Members     []*TeamMember `json:"members"`
 }
 
-// Application returns an Application structure of a specific Application
+// Application formerly returned a specific OAuth2 application.
+//
+// Deprecated: use CurrentApplication for the bot's application.
 //
 //	appID : The ID of an Application
 func (s *Session) Application(appID string) (st *Application, err error) {
-
-	body, err := s.RequestWithBucketID("GET", EndpointOAuth2Application(appID), nil, EndpointOAuth2Application(""))
-	if err != nil {
-		return
-	}
-
-	err = unmarshal(body, &st)
-	return
+	return nil, ErrOAuthApplicationCRUDUnsupported
 }
 
-// Applications returns all applications for the authenticated user
-func (s *Session) Applications() (st []*Application, err error) {
-
-	body, err := s.RequestWithBucketID("GET", EndpointOAuth2Applications, nil, EndpointOAuth2Applications)
-	if err != nil {
-		return
-	}
-
-	err = unmarshal(body, &st)
-	return
-}
-
-// ApplicationCreate creates a new Application
+// Applications formerly returned all OAuth2 applications for a user.
 //
+// Deprecated: this is not a public bot API operation.
+func (s *Session) Applications() (st []*Application, err error) {
+	return nil, ErrOAuthApplicationCRUDUnsupported
+}
+
+// ApplicationCreate formerly created an OAuth2 application.
+//
+// Deprecated: this is not a public bot API operation.
 //	name : Name of Application / Bot
 //	uris : Redirect URIs (Not required)
 func (s *Session) ApplicationCreate(ap *Application) (st *Application, err error) {
-
-	data := struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-	}{ap.Name, ap.Description}
-
-	body, err := s.RequestWithBucketID("POST", EndpointOAuth2Applications, data, EndpointOAuth2Applications)
-	if err != nil {
-		return
-	}
-
-	err = unmarshal(body, &st)
-	return
+	return nil, ErrOAuthApplicationCRUDUnsupported
 }
 
-// ApplicationUpdate updates an existing Application
+// ApplicationUpdate formerly updated an OAuth2 application.
 //
+// Deprecated: use CurrentApplicationEdit.
 //	var : desc
 func (s *Session) ApplicationUpdate(appID string, ap *Application) (st *Application, err error) {
-
-	data := struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-	}{ap.Name, ap.Description}
-
-	body, err := s.RequestWithBucketID("PUT", EndpointOAuth2Application(appID), data, EndpointOAuth2Application(""))
-	if err != nil {
-		return
-	}
-
-	err = unmarshal(body, &st)
-	return
+	return nil, ErrOAuthApplicationCRUDUnsupported
 }
 
-// ApplicationDelete deletes an existing Application
+// ApplicationDelete formerly deleted an OAuth2 application.
 //
+// Deprecated: this is not a public bot API operation.
 //	appID : The ID of an Application
 func (s *Session) ApplicationDelete(appID string) (err error) {
+	return ErrOAuthApplicationCRUDUnsupported
+}
 
-	_, err = s.RequestWithBucketID("DELETE", EndpointOAuth2Application(appID), nil, EndpointOAuth2Application(""))
+// CurrentApplication returns the application associated with the bot token.
+func (s *Session) CurrentApplication(options ...RequestOption) (*Application, error) {
+	body, err := s.RequestWithBucketID("GET", EndpointCurrentApplication, nil, EndpointCurrentApplication, options...)
 	if err != nil {
-		return
+		return nil, err
 	}
+	application := &Application{}
+	if err = unmarshal(body, application); err != nil {
+		return nil, err
+	}
+	return application, nil
+}
 
-	return
+// CurrentApplicationEdit edits the application associated with the bot token.
+func (s *Session) CurrentApplicationEdit(edit *ApplicationEdit, options ...RequestOption) (*Application, error) {
+	if edit == nil {
+		return nil, errors.New("application edit must not be nil")
+	}
+	body, err := s.RequestWithBucketID("PATCH", EndpointCurrentApplication, edit, EndpointCurrentApplication, options...)
+	if err != nil {
+		return nil, err
+	}
+	application := &Application{}
+	if err = unmarshal(body, application); err != nil {
+		return nil, err
+	}
+	return application, nil
 }
 
 // Asset struct stores values for an asset of an application

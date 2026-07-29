@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 //////////////////////////////////////////////////////////////////////////////
@@ -358,6 +359,65 @@ func TestJoinedPrivateArchivedThreadsUseSnowflakeBefore(t *testing.T) {
 
 	if _, err = session.ThreadsPrivateJoinedArchived("channel", "500", 25); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestChannelMessagesPinsUsesCurrentPaginatedRoute(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := time.Date(2026, time.July, 29, 12, 30, 0, 0, time.UTC)
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path != "/api/v10/channels/channel/messages/pins" {
+			t.Errorf("path = %q", request.URL.Path)
+		}
+		if got := request.URL.Query().Get("before"); got != before.Format(time.RFC3339) {
+			t.Errorf("before = %q", got)
+		}
+		if got := request.URL.Query().Get("limit"); got != "25" {
+			t.Errorf("limit = %q", got)
+		}
+		return jsonResponse(http.StatusOK, `{
+			"items":[{"pinned_at":"2026-07-29T12:00:00Z","message":{"id":"message"}}],
+			"has_more":true
+		}`), nil
+	})
+
+	pins, err := session.ChannelMessagesPins("channel", &before, 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pins.HasMore || len(pins.Items) != 1 || pins.Items[0].Message.ID != "message" {
+		t.Fatalf("pins = %#v", pins)
+	}
+}
+
+func TestChannelMessagePinUsesCurrentRoute(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	session.Client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		if request.URL.Path != "/api/v10/channels/channel/messages/pins/message" {
+			t.Errorf("path = %q", request.URL.Path)
+		}
+		if request.Method != http.MethodPut && request.Method != http.MethodDelete {
+			t.Errorf("method = %q", request.Method)
+		}
+		return jsonResponse(http.StatusNoContent, ``), nil
+	})
+
+	if err = session.ChannelMessagePin("channel", "message"); err != nil {
+		t.Fatal(err)
+	}
+	if err = session.ChannelMessageUnpin("channel", "message"); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
 	}
 }
 

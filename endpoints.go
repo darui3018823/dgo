@@ -140,8 +140,10 @@ var (
 	EndpointChannelMessage                      = func(cID, mID string) string { return EndpointChannels + cID + "/messages/" + mID }
 	EndpointChannelMessageThread                = func(cID, mID string) string { return EndpointChannelMessage(cID, mID) + "/threads" }
 	EndpointChannelMessagesBulkDelete           = func(cID string) string { return EndpointChannel(cID) + "/messages/bulk-delete" }
-	EndpointChannelMessagesPins                 = func(cID string) string { return EndpointChannel(cID) + "/pins" }
-	EndpointChannelMessagePin                   = func(cID, mID string) string { return EndpointChannel(cID) + "/pins/" + mID }
+	EndpointChannelMessagesPins                 = func(cID string) string { return EndpointChannelMessages(cID) + "/pins" }
+	EndpointChannelMessagePin                   = func(cID, mID string) string { return EndpointChannelMessagesPins(cID) + "/" + mID }
+	EndpointChannelMessagesPinsDeprecated       = func(cID string) string { return EndpointChannel(cID) + "/pins" }
+	EndpointChannelMessagePinDeprecated         = func(cID, mID string) string { return EndpointChannelMessagesPinsDeprecated(cID) + "/" + mID }
 	EndpointChannelMessageCrosspost             = func(cID, mID string) string { return EndpointChannel(cID) + "/messages/" + mID + "/crosspost" }
 	EndpointChannelFollow                       = func(cID string) string { return EndpointChannel(cID) + "/followers" }
 	EndpointThreadMembers                       = func(tID string) string { return EndpointChannel(tID) + "/thread-members" }

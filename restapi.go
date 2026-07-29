@@ -2130,7 +2130,7 @@ func (s *Session) ChannelMessagesBulkDelete(channelID string, messages []string,
 // messageID: The ID of a message.
 func (s *Session) ChannelMessagePin(channelID, messageID string, options ...RequestOption) (err error) {
 
-	_, err = s.RequestWithBucketID("PUT", EndpointChannelMessagePin(channelID, messageID), nil, EndpointChannelMessagePin(channelID, ""), options...)
+	_, err = s.RequestWithBucketID("PUT", EndpointChannelMessagePin(channelID, messageID), nil, EndpointChannelMessagesPins(channelID), options...)
 	return
 }
 
@@ -2139,16 +2139,47 @@ func (s *Session) ChannelMessagePin(channelID, messageID string, options ...Requ
 // messageID: The ID of a message.
 func (s *Session) ChannelMessageUnpin(channelID, messageID string, options ...RequestOption) (err error) {
 
-	_, err = s.RequestWithBucketID("DELETE", EndpointChannelMessagePin(channelID, messageID), nil, EndpointChannelMessagePin(channelID, ""), options...)
+	_, err = s.RequestWithBucketID("DELETE", EndpointChannelMessagePin(channelID, messageID), nil, EndpointChannelMessagesPins(channelID), options...)
 	return
 }
 
-// ChannelMessagesPinned returns an array of Message structures for pinned messages
-// within a given channel
+// ChannelMessagesPins returns one page of pinned messages within a channel.
+// before : If specified, returns only messages pinned before the timestamp.
+// limit  : Optional maximum number of pins to return (1-50).
+func (s *Session) ChannelMessagesPins(channelID string, before *time.Time, limit int, options ...RequestOption) (pins *ChannelPins, err error) {
+	endpoint := EndpointChannelMessagesPins(channelID)
+	query := url.Values{}
+	if before != nil {
+		query.Set("before", before.Format(time.RFC3339))
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+
+	requestURL := endpoint
+	if len(query) > 0 {
+		requestURL += "?" + query.Encode()
+	}
+	body, err := s.RequestWithBucketID("GET", requestURL, nil, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+
+	pins = &ChannelPins{}
+	if err = unmarshal(body, pins); err != nil {
+		return nil, err
+	}
+	return pins, nil
+}
+
+// ChannelMessagesPinned returns the first 50 pinned messages in a channel.
+//
+// Deprecated: use ChannelMessagesPins, which supports current pagination.
 // channelID : The ID of a Channel.
 func (s *Session) ChannelMessagesPinned(channelID string, options ...RequestOption) (st []*Message, err error) {
 
-	body, err := s.RequestWithBucketID("GET", EndpointChannelMessagesPins(channelID), nil, EndpointChannelMessagesPins(channelID), options...)
+	endpoint := EndpointChannelMessagesPinsDeprecated(channelID)
+	body, err := s.RequestWithBucketID("GET", endpoint, nil, endpoint, options...)
 
 	if err != nil {
 		return

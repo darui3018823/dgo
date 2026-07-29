@@ -164,6 +164,18 @@ type Message struct {
 	Poll *Poll `json:"poll"`
 }
 
+// MessagePin contains a pinned message and the time it was pinned.
+type MessagePin struct {
+	PinnedAt time.Time `json:"pinned_at"`
+	Message  *Message  `json:"message"`
+}
+
+// ChannelPins is a page of pinned messages.
+type ChannelPins struct {
+	Items   []*MessagePin `json:"items"`
+	HasMore bool          `json:"has_more"`
+}
+
 // UnmarshalJSON is a helper function to unmarshal the Message.
 func (m *Message) UnmarshalJSON(data []byte) error {
 	type message Message

@@ -75,6 +75,37 @@ func TestGroupSessionProposalCommitWelcomeAndReplay(t *testing.T) {
 	testExporterSecretsEqual(t, alice, bob)
 }
 
+func TestGroupSessionPendingGroupUsesSentKeyPackage(t *testing.T) {
+	groupID := testUint64Bytes(9000)
+	external := newTestExternalSender(t)
+
+	session, err := NewGroupSession(testUint64Bytes(1))
+	if err != nil {
+		t.Fatalf("NewGroupSession: %v", err)
+	}
+	if err := session.Reset(groupID, daveProtocolVersion); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	sentKeyPackage := testKeyPackage(t, session)
+	if err := session.SetExternalSender(external.raw); err != nil {
+		t.Fatalf("SetExternalSender: %v", err)
+	}
+
+	session.mu.Lock()
+	localGroup, err := session.loadGroupLocked()
+	session.mu.Unlock()
+	if err != nil {
+		t.Fatalf("load pending group: %v", err)
+	}
+	members := localGroup.GetMembers()
+	if len(members) != 1 || members[0] == nil || members[0].KeyPackage == nil {
+		t.Fatalf("pending group members = %#v, want one member with a KeyPackage", members)
+	}
+	if !bytes.Equal(members[0].KeyPackage.Marshal(), sentKeyPackage.Marshal()) {
+		t.Fatal("pending group creator KeyPackage differs from the KeyPackage sent to the voice gateway")
+	}
+}
+
 func TestGroupSessionCompetingCommitRollsBackCandidate(t *testing.T) {
 	groupID := testUint64Bytes(9002)
 	external := newTestExternalSender(t)
@@ -193,6 +224,9 @@ func newTestGroupSession(
 	if err := session.Reset(groupID, daveProtocolVersion); err != nil {
 		t.Fatalf("Reset(%d): %v", userID, err)
 	}
+	// The gateway receives the KeyPackage before it provides opcode 25. The
+	// eventual pending group must retain this exact creator leaf.
+	testKeyPackage(t, session)
 	if err := session.SetExternalSender(externalSender); err != nil {
 		t.Fatalf("SetExternalSender(%d): %v", userID, err)
 	}
@@ -214,15 +248,11 @@ func newTestExternalSender(t *testing.T) testExternalSender {
 
 func testKeyPackage(t *testing.T, session *GroupSession) *keypackages.KeyPackage {
 	t.Helper()
-	wrapped, err := session.GenerateKeyPackage()
+	raw, err := session.GenerateKeyPackage()
 	if err != nil {
 		t.Fatalf("GenerateKeyPackage: %v", err)
 	}
-	message, err := framing.UnmarshalMLSMessage(wrapped)
-	if err != nil {
-		t.Fatalf("UnmarshalMLSMessage(key package): %v", err)
-	}
-	keyPackage, err := keypackages.UnmarshalKeyPackage(message.KeyPackage)
+	keyPackage, err := keypackages.UnmarshalKeyPackage(raw)
 	if err != nil {
 		t.Fatalf("UnmarshalKeyPackage: %v", err)
 	}

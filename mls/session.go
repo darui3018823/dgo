@@ -52,6 +52,7 @@ type GroupSession struct {
 	pendingBaseState      []byte
 	pendingCandidateState []byte
 	pendingCommit         []byte
+	pendingKeyPackage     []byte
 }
 
 // NewGroupSession creates an MLS client using the DAVE v1 cipher suite.
@@ -111,6 +112,7 @@ func (s *GroupSession) resetClientLocked() error {
 	s.groupCreated = false
 	s.established = false
 	s.clearPendingCommitLocked()
+	s.pendingKeyPackage = nil
 	return nil
 }
 
@@ -152,21 +154,14 @@ func (s *GroupSession) SetExternalSender(data []byte) error {
 }
 
 func (s *GroupSession) createPendingGroupLocked() error {
-	if s.groupCreated || len(s.groupID) == 0 || len(s.externalSender) == 0 {
+	if s.groupCreated || len(s.groupID) == 0 || len(s.externalSender) == 0 || len(s.pendingKeyPackage) == 0 {
 		return nil
 	}
 
-	creatorKeyPackage, err := s.client.FreshKeyPackageBytes(
-		context.Background(),
-		keypackages.InfiniteLifetime(),
-	)
-	if err != nil {
-		return fmt.Errorf("generating creator key package: %w", err)
-	}
 	if _, err := s.client.CreateGroupWithExternalSender(
 		context.Background(),
 		s.groupID,
-		creatorKeyPackage,
+		s.pendingKeyPackage,
 		s.externalSender,
 	); err != nil {
 		return fmt.Errorf("creating pending MLS group: %w", err)
@@ -176,9 +171,10 @@ func (s *GroupSession) createPendingGroupLocked() error {
 	return s.validateGroupLocked(false)
 }
 
-// GenerateKeyPackage returns an MLSMessage-wrapped, single-use KeyPackage for
-// opcode 26. The raw KeyPackage remains cached inside mls-go for Welcome
-// processing.
+// GenerateKeyPackage returns the raw, single-use KeyPackage payload for opcode
+// 26. The same KeyPackage is also used to create the local pending group, so
+// the initial Commit identifies the same LeafNode accepted by the voice
+// gateway.
 func (s *GroupSession) GenerateKeyPackage() ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -186,18 +182,20 @@ func (s *GroupSession) GenerateKeyPackage() ([]byte, error) {
 	if len(s.groupID) == 0 {
 		return nil, fmt.Errorf("DAVE group ID is not configured")
 	}
+	if len(s.pendingKeyPackage) == 0 {
+		raw, err := s.client.FreshKeyPackageBytes(
+			context.Background(),
+			keypackages.InfiniteLifetime(),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("generating join key package: %w", err)
+		}
+		s.pendingKeyPackage = append(s.pendingKeyPackage[:0], raw...)
+	}
 	if err := s.createPendingGroupLocked(); err != nil {
 		return nil, err
 	}
-
-	raw, err := s.client.FreshKeyPackageBytes(
-		context.Background(),
-		keypackages.InfiniteLifetime(),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("generating join key package: %w", err)
-	}
-	return (&framing.MLSMessage{KeyPackage: raw}).Marshal(), nil
+	return append([]byte(nil), s.pendingKeyPackage...), nil
 }
 
 // ProcessProposals processes opcode 27 and returns the opcode 28 payload:

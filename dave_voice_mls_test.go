@@ -30,6 +30,9 @@ func TestVoiceDAVEProposalCommitWelcomeLifecycle(t *testing.T) {
 	if err := alice.Configure(channelID, 1, []string{aliceUserID, bobUserID}); err != nil {
 		t.Fatalf("alice Configure: %v", err)
 	}
+	// Generate the packet that the gateway would receive before the external
+	// sender arrives. The pending group must use this exact KeyPackage leaf.
+	testDAVEKeyPackage(t, alice)
 	if err := alice.HandleExternalSenderPackage(externalSender); err != nil {
 		t.Fatalf("alice HandleExternalSenderPackage: %v", err)
 	}
@@ -120,15 +123,11 @@ func testDAVEExternalSender(t *testing.T) ([]byte, *ciphersuite.SignaturePrivate
 
 func testDAVEKeyPackage(t *testing.T, session *DAVESession) *keypackages.KeyPackage {
 	t.Helper()
-	wrapped, err := session.GenerateKeyPackage()
+	raw, err := session.GenerateKeyPackage()
 	if err != nil {
 		t.Fatalf("GenerateKeyPackage: %v", err)
 	}
-	message, err := framing.UnmarshalMLSMessage(wrapped)
-	if err != nil {
-		t.Fatalf("UnmarshalMLSMessage(key package): %v", err)
-	}
-	keyPackage, err := keypackages.UnmarshalKeyPackage(message.KeyPackage)
+	keyPackage, err := keypackages.UnmarshalKeyPackage(raw)
 	if err != nil {
 		t.Fatalf("UnmarshalKeyPackage: %v", err)
 	}

@@ -2147,3 +2147,49 @@ Section 14.4の項目1〜4に着手し、次を実装した。
 - `TestGatewayOutboundRateLimiterFixture`: 成功
 
 実装コミットは`5dbf6bc fix(gateway): serialize and rate limit outbound writes`である。Section 14.4の項目5〜7（nested moduleを含む追加検証、実Discord Gateway/Voice/DAVE interop、修正完了条件の再判定）は未着手である。
+
+## 14.6 項目5〜7の検証結果（2026-08-01追記）
+
+### 項目5: root/nested moduleの追加検証
+
+root、`examples/linked_roles`、`examples/voice_receive` の3 moduleについて、CI定義に合わせて次を実行した。
+
+- `go test ./...`: 3 moduleとも成功
+- `go test -race ./...`: 3 moduleとも成功
+- `go vet ./...`: 3 moduleとも成功
+- `staticcheck@2026.1`: 3 moduleとも成功
+- `govulncheck@v1.1.4`: 3 moduleとも、コードから到達可能な脆弱性0件
+- coverage: root 48.3%（root package）、`mls` 37.1%、`linked_roles` 62.2%、`voice_receive` 44.2%。各CI floor（31%、60%、40%）を満たす
+- `go build ./...`: root/nested moduleとも成功
+- `go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12`: 成功
+- `gofmt -l .`: 出力なし
+
+`govulncheck`は、requireされたmodule全体には非到達の既知報告を1件表示したが、対象コードから到達可能な脆弱性は0件だった。
+
+### 項目6: 実Discord E2E・interop
+
+この環境では`DGB_TOKEN`、`DG_GUILD`、`DG_CHANNEL`、`DG_VOICE_CHANNEL`、`DG_ADMIN`およびOAuth2 tokenが未設定だったため、実Discord Gateway、Voice server、DAVE sessionを使う試験は実行できなかった。ローカルのGateway/Voice fixture、DAVE MLS lifecycle、RTP fuzzは実行済みだが、実サービスとのE2E・interopの代替証拠とはしない。
+
+malformed RTPについては`go test -fuzz=FuzzDecodeVoicePacket -fuzztime=10s`を実行し、約69万回の実行でpanicなしだった。
+
+### 項目7: 修正完了条件の再判定
+
+| 修正完了条件 | 判定 | 主な検証 |
+| --- | --- | --- |
+| OP9 true/false fixture | PASS | `TestInvalidSessionPayloadControlsResumeState` |
+| fatal close codeで再接続しない | PASS | `TestGatewayCloseCodeClassification`、`TestGatewayCloseEventExposesTerminalFailure` |
+| resume URLを使う | PASS | `TestReadySelectsResumeGatewayURL`、`TestGatewayResumeDoesNotConsumeIdentifyQuota` |
+| HELLO後かつREADY前にheartbeatを開始 | PASS | `TestOpenStartsHeartbeatBeforeDelayedReady` |
+| Gateway send limiterが120/60秒を超えない | PASS | `TestGatewayOutboundRateLimiterFixture` |
+| Voice HELLO/READY逆転でpanicしない | PASS | `TestVoiceReadyBeforeHelloDoesNotStartHeartbeat` |
+| malformed RTP fuzzでpanicしない | PASS（local fuzz） | `FuzzDecodeVoicePacket`、10秒実行 |
+| DAVE active中に平文fallbackしない | PASS | `TestDAVERejectsPlaintextOnlyWhileActive`、`TestDAVEEncryptionFailsClosed` |
+| debug logにcredentialを出さない | PASS | REST、Gateway、Voiceのredaction tests |
+| Interaction body上限 | PASS | `interactions_test.go`のbody over limit tests |
+| handler内Add/Removeでdeadlockしない | PASS | `TestSyncHandlerCanModifyHandlers` |
+| nested modulesを含むCI | LOCAL PASS / remote未確認 | 3 moduleのtest/race/vet/staticcheck/coverage/build。GitHub Actions自体は未実行 |
+| deprecated/private routeを通常利用できない | PASS | `TestRemovedPublicAPIRoutesFailWithoutRequests` |
+| current modal、pins、permission、pagination fixture | PASS | modal/pins/permission/pagination tests |
+| race detectorとgovulncheckがrelease workflowで成功 | LOCAL PASS / workflow未確認 | 3 moduleで実行。release workflow自体は未実行 |
+
+以上により、ローカル検証可能な条件は満たした。ただし、実Discord E2E・interopとGitHub Actions/release workflowの実行結果が未取得のため、この時点では監査対応を`close`しない。closeには、検証用Botの資格情報を用いた項目6の実行と、対象commitに対するCI/release workflowの成功確認が残っている。

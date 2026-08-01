@@ -94,6 +94,7 @@ type gatewayConnectionLifecycle struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	ws        *websocket.Conn
+	writes    *gatewayWriteQueue
 	stop      chan interface{}
 	ready     chan gatewayAttemptResult
 	finish    sync.Once
@@ -395,13 +396,42 @@ func (s *Session) attachGatewayWebsocket(conn *gatewayConnectionLifecycle, wsCon
 	}
 
 	conn.ws = wsConn
+	conn.writes = newGatewayWriteQueue(conn.ctx, wsConn, &s.wsMutex, nil)
 	wsConn.SetCloseHandler(func(code int, text string) error { return nil })
 	s.Lock()
 	s.wsConn = wsConn
 	s.listening = conn.stop
 	s.DataReady = false
 	s.Unlock()
+	s.startGatewayRoutine(conn.writes.run)
 	return nil
+}
+
+func (s *Session) writeGatewayGeneration(conn *gatewayConnectionLifecycle, data interface{}) error {
+	if conn == nil || conn.ws == nil || conn.writes == nil {
+		return ErrWSNotFound
+	}
+	return conn.writes.enqueue(conn.ctx, data)
+}
+
+func (s *Session) writeGatewayCurrent(data interface{}) error {
+	s.gatewayLifecycleMu.Lock()
+	conn := s.gatewayConnection
+	s.gatewayLifecycleMu.Unlock()
+	if conn != nil {
+		return s.writeGatewayGeneration(conn, data)
+	}
+
+	s.RLock()
+	wsConn := s.wsConn
+	s.RUnlock()
+	if wsConn == nil {
+		return ErrWSNotFound
+	}
+	s.wsMutex.Lock()
+	err := wsConn.WriteJSON(data)
+	s.wsMutex.Unlock()
+	return err
 }
 
 func (s *Session) authenticateGatewayGeneration(conn *gatewayConnectionLifecycle, connectGateway string) error {
@@ -428,7 +458,7 @@ func (s *Session) authenticateGatewayGeneration(conn *gatewayConnectionLifecycle
 				)
 			}
 		}
-		if err := s.identify(conn.ws); err != nil {
+		if err := s.identify(conn); err != nil {
 			return fmt.Errorf("error sending identify packet to gateway %s: %w", connectGateway, err)
 		}
 		return nil
@@ -440,9 +470,7 @@ func (s *Session) authenticateGatewayGeneration(conn *gatewayConnectionLifecycle
 	packet.Data.SessionID = sessionID
 	packet.Data.Sequence = sequence
 	s.log(LogInformational, "sending resume packet to gateway")
-	s.wsMutex.Lock()
-	err := conn.ws.WriteJSON(packet)
-	s.wsMutex.Unlock()
+	err := s.writeGatewayGeneration(conn, packet)
 	if err != nil {
 		return fmt.Errorf("error sending gateway resume packet to %s: %w", connectGateway, err)
 	}
@@ -683,12 +711,10 @@ func (s *Session) heartbeat(conn *gatewayConnectionLifecycle, heartbeatInterval 
 		}
 		sequence := atomic.LoadInt64(s.sequence)
 		s.log(LogDebug, "sending gateway websocket heartbeat seq %d", sequence)
-		s.wsMutex.Lock()
 		s.Lock()
 		s.LastHeartbeatSent = time.Now().UTC()
 		s.Unlock()
-		err = conn.ws.WriteJSON(heartbeatOp{1, sequence})
-		s.wsMutex.Unlock()
+		err = s.writeGatewayGeneration(conn, heartbeatOp{1, sequence})
 		if err != nil {
 			s.log(LogError, "error sending heartbeat to gateway: %s", err)
 			s.finishGatewayGeneration(conn, gatewayAttemptResult{
@@ -1134,17 +1160,7 @@ func (s *Session) UpdateStatusComplex(usd UpdateStatusData) (err error) {
 		usd.Activities = make([]*Activity, 0)
 	}
 
-	s.RLock()
-	defer s.RUnlock()
-	if s.wsConn == nil {
-		return ErrWSNotFound
-	}
-
-	s.wsMutex.Lock()
-	err = s.wsConn.WriteJSON(updateStatusOp{3, usd})
-	s.wsMutex.Unlock()
-
-	return
+	return s.writeGatewayCurrent(updateStatusOp{3, usd})
 }
 
 type requestGuildMembersData struct {
@@ -1316,17 +1332,7 @@ func (s *Session) RequestGuildMembersBatchList(guildIDs []string, userIDs []stri
 
 // GatewayWriteStruct allows for sending raw gateway structs over the gateway.
 func (s *Session) GatewayWriteStruct(data interface{}) (err error) {
-	s.RLock()
-	defer s.RUnlock()
-	if s.wsConn == nil {
-		return ErrWSNotFound
-	}
-
-	s.wsMutex.Lock()
-	err = s.wsConn.WriteJSON(data)
-	s.wsMutex.Unlock()
-
-	return err
+	return s.writeGatewayCurrent(data)
 }
 
 func (s *Session) requestGuildMembers(data requestGuildMembersData) (err error) {
@@ -1334,12 +1340,6 @@ func (s *Session) requestGuildMembers(data requestGuildMembersData) (err error) 
 
 	if err = s.validateGuildMembersRequest(data); err != nil {
 		return err
-	}
-
-	s.RLock()
-	defer s.RUnlock()
-	if s.wsConn == nil {
-		return ErrWSNotFound
 	}
 
 	var reservation time.Time
@@ -1350,9 +1350,7 @@ func (s *Session) requestGuildMembers(data requestGuildMembersData) (err error) 
 		}
 	}
 
-	s.wsMutex.Lock()
-	err = s.wsConn.WriteJSON(requestGuildMembersOp{8, data})
-	s.wsMutex.Unlock()
+	err = s.writeGatewayCurrent(requestGuildMembersOp{8, data})
 	if err != nil && !reservation.IsZero() {
 		s.releaseAllGuildMembersRequest(data.GuildID, reservation)
 	}
@@ -1480,15 +1478,7 @@ func (s *Session) onEvent(messageType int, message []byte) (*Event, error) {
 	// Must respond with a heartbeat packet within 5 seconds
 	if e.Operation == 1 {
 		s.log(LogInformational, "sending heartbeat in response to Op1")
-		s.RLock()
-		wsConn := s.wsConn
-		s.RUnlock()
-		if wsConn == nil {
-			return e, ErrWSNotFound
-		}
-		s.wsMutex.Lock()
-		err = wsConn.WriteJSON(heartbeatOp{1, atomic.LoadInt64(s.sequence)})
-		s.wsMutex.Unlock()
+		err = s.writeGatewayCurrent(heartbeatOp{1, atomic.LoadInt64(s.sequence)})
 		if err != nil {
 			s.log(LogError, "error sending heartbeat in response to Op1")
 			return e, err
@@ -1770,9 +1760,9 @@ type identifyOp struct {
 }
 
 // identify sends the identify packet to one exact Gateway generation.
-func (s *Session) identify(wsConn *websocket.Conn) error {
+func (s *Session) identify(conn *gatewayConnectionLifecycle) error {
 	s.log(LogDebug, "called")
-	if wsConn == nil {
+	if conn == nil || conn.ws == nil {
 		return ErrWSNotFound
 	}
 
@@ -1806,11 +1796,7 @@ func (s *Session) identify(wsConn *websocket.Conn) error {
 	op := identifyOp{2, s.Identify}
 	s.Unlock()
 	s.log(LogDebug, "sending identify packet with intents=%d shard=%v", op.Data.Intents, op.Data.Shard)
-	s.wsMutex.Lock()
-	err := wsConn.WriteJSON(op)
-	s.wsMutex.Unlock()
-
-	return err
+	return s.writeGatewayGeneration(conn, op)
 }
 
 // Close closes the Gateway and every active Voice connection. It is

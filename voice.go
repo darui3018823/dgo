@@ -84,10 +84,12 @@ type VoiceConnection struct {
 
 	lastHeartbeatNonce int64
 	awaitingHeartbeat  bool
-	lastVoiceSequence   uint16
-	hasVoiceSequence    bool
+	lastVoiceSequence  uint16
+	hasVoiceSequence   bool
+	lastDAVESequence   uint16
+	hasDAVESequence    bool
 
-	malformedRTPPackets       atomic.Uint64
+	malformedRTPPackets      atomic.Uint64
 	daveEncryptFailureStreak atomic.Uint32
 
 	op4 voiceOP4
@@ -297,6 +299,8 @@ func (v *VoiceConnection) closeTransport(sendCloseFrame bool) {
 	v.dave = nil
 	v.hasVoiceSequence = false
 	v.lastVoiceSequence = 0
+	v.hasDAVESequence = false
+	v.lastDAVESequence = 0
 	v.seqAck = 0
 	v.awaitingHeartbeat = false
 	v.op8 = voiceOP8{}
@@ -1311,8 +1315,8 @@ func (v *VoiceConnection) udpOpen() (err error) {
 
 	// Create a 74 byte array to store the packet data
 	sb := make([]byte, 74)
-	binary.BigEndian.PutUint16(sb, 1)              // Packet type (0x1 is request, 0x2 is response)
-	binary.BigEndian.PutUint16(sb[2:], 70)         // Packet length (excluding type and length fields)
+	binary.BigEndian.PutUint16(sb, 1)            // Packet type (0x1 is request, 0x2 is response)
+	binary.BigEndian.PutUint16(sb[2:], 70)       // Packet length (excluding type and length fields)
 	binary.BigEndian.PutUint32(sb[4:], op2.SSRC) // The SSRC code from the Op 2 VoiceConnection event
 
 	// And send that data over the UDP connection to Discord.
@@ -1431,9 +1435,15 @@ func (v *VoiceConnection) udpKeepAlive(
 
 // opusSender will listen on the given channel and send any
 // pre-encoded opus audio to Discord.  Supposedly.
-func (v *VoiceConnection) opusSender(udpConn *net.UDPConn, close <-chan struct{}, opus <-chan []byte, rate, size int) {
+func (v *VoiceConnection) opusSender(
+	ctx context.Context,
+	udpConn *net.UDPConn,
+	close <-chan struct{},
+	opus <-chan []byte,
+	rate, size int,
+) {
 
-	if udpConn == nil || close == nil {
+	if ctx == nil || udpConn == nil || close == nil {
 		return
 	}
 
@@ -1456,6 +1466,8 @@ func (v *VoiceConnection) opusSender(udpConn *net.UDPConn, close <-chan struct{}
 
 		// Get data from chan.  If chan is closed, return.
 		select {
+		case <-ctx.Done():
+			return
 		case <-close:
 			return
 		case recvbuf, ok = <-opus:
@@ -1501,6 +1513,8 @@ func (v *VoiceConnection) opusSender(udpConn *net.UDPConn, close <-chan struct{}
 		// block here until we're exactly at the right time :)
 		// Then send rtp audio packet to Discord over UDP
 		select {
+		case <-ctx.Done():
+			return
 		case <-close:
 			return
 		case <-ticker.C:
@@ -1535,15 +1549,27 @@ type Packet struct {
 // opusReceiver listens on the UDP socket for incoming packets
 // and sends them across the given channel
 // NOTE :: This function may change names later.
-func (v *VoiceConnection) opusReceiver(udpConn *net.UDPConn, close <-chan struct{}, c chan *Packet) {
+func (v *VoiceConnection) opusReceiver(
+	ctx context.Context,
+	udpConn *net.UDPConn,
+	close <-chan struct{},
+	c chan *Packet,
+) {
 
-	if udpConn == nil || close == nil {
+	if ctx == nil || udpConn == nil || close == nil {
 		return
 	}
 
 	recvbuf := make([]byte, 2048)
 
 	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-close:
+			return
+		default:
+		}
 		rlen, err := udpConn.Read(recvbuf)
 		if err != nil {
 			// Detect if we have been closed manually. If a Close() has already
@@ -1562,6 +1588,8 @@ func (v *VoiceConnection) opusReceiver(udpConn *net.UDPConn, close <-chan struct
 		}
 
 		select {
+		case <-ctx.Done():
+			return
 		case <-close:
 			return
 		default:

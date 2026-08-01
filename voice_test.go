@@ -1,6 +1,7 @@
 package dgo
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/binary"
@@ -287,7 +288,7 @@ func TestVoiceClientsConnectOpcode(t *testing.T) {
 func TestClassifyVoiceCloseCode(t *testing.T) {
 	tests := map[int]voiceCloseAction{
 		4014: voiceCloseWaitForServerUpdate,
-		4015: voiceCloseReconnect,
+		4015: voiceCloseResume,
 		4017: voiceCloseTerminal,
 		4021: voiceCloseTerminal,
 		4022: voiceCloseTerminal,
@@ -301,7 +302,7 @@ func TestClassifyVoiceCloseCode(t *testing.T) {
 
 func TestVoiceHeartbeatRejectsInvalidInterval(t *testing.T) {
 	v := &VoiceConnection{LogLevel: -1}
-	v.wsHeartbeat(nil, nil, 0)
+	v.wsHeartbeat(context.Background(), nil, nil, 0)
 }
 
 func testVoiceAEAD(t testing.TB) cipher.AEAD {

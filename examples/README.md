@@ -3,7 +3,7 @@
 # dgo examples
 
 These examples demonstrate common dgo REST, Gateway, interaction, and voice
-workflows. They require Go 1.24 or newer.
+workflows. They require Go 1.26.5 or newer.
 
 Run examples from their directory with a bot token and only the intents and
 permissions they require. Never use a user token or commit credentials.

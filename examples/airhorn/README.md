@@ -11,7 +11,7 @@ For general Go discussion, visit [Discord Gophers](https://discord.gg/golang).
 ### Build
 
 This assumes you already have a working Go environment setup and that
-Go 1.24 or newer and the module dependencies are available.
+Go 1.26.5 or newer and the module dependencies are available.
 
 From within the airhorn example folder, run the below command to compile the
 example.

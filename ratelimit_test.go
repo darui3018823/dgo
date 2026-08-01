@@ -166,6 +166,53 @@ func TestRateLimiterDiscoveredBucketsKeepMajorParametersSeparate(t *testing.T) {
 	}
 }
 
+func TestRateLimiterCanonicalBucketReceivesAliasResponse(t *testing.T) {
+	rl := NewRatelimiter()
+	rl.GlobalRateLimit = 0
+
+	firstHeaders := make(http.Header)
+	firstHeaders.Set("X-RateLimit-Bucket", "shared-discord-hash")
+	firstHeaders.Set("X-RateLimit-Remaining", "5")
+	first, err := rl.LockBucketRouteContext(
+		context.Background(),
+		"GET /channels/:id/messages",
+		"same-major",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Release(firstHeaders); err != nil {
+		t.Fatal(err)
+	}
+
+	aliasHeaders := make(http.Header)
+	aliasHeaders.Set("X-RateLimit-Bucket", "shared-discord-hash")
+	aliasHeaders.Set("X-RateLimit-Remaining", "0")
+	aliasHeaders.Set("X-RateLimit-Reset-After", "0.2")
+	alias, err := rl.LockBucketRouteContext(
+		context.Background(),
+		"POST /channels/:id/messages",
+		"same-major",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := alias.Release(aliasHeaders); err != nil {
+		t.Fatal(err)
+	}
+
+	first.Lock()
+	remaining := first.Remaining
+	resetAfter := first.ResetAfter()
+	first.Unlock()
+	if remaining != 0 {
+		t.Fatalf("canonical bucket remaining = %d, want 0", remaining)
+	}
+	if resetAfter <= 0 {
+		t.Fatalf("canonical bucket reset after = %s, want positive duration", resetAfter)
+	}
+}
+
 func TestRateLimiterBoundsBucketCache(t *testing.T) {
 	rl := NewRatelimiter()
 	rl.MaxBuckets = 2

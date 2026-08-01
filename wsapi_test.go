@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -931,7 +932,7 @@ func TestOpenWithContextCancelsGatewayDial(t *testing.T) {
 
 func TestOpenWithContextCancelsHelloRead(t *testing.T) {
 	connected := make(chan struct{})
-	server := newGatewayTestServer(t, func(_ *gatewayTestServer, _ int, ws *websocket.Conn) {
+	server := newGatewayTestServer(t, func(server *gatewayTestServer, _ int, ws *websocket.Conn) {
 		close(connected)
 		for {
 			if _, _, err := readGatewayOperation(ws); err != nil {
@@ -959,7 +960,7 @@ func TestOpenWithContextCancelsHelloRead(t *testing.T) {
 
 func TestOpenWithContextCancelsReadyWait(t *testing.T) {
 	identified := make(chan struct{})
-	server := newGatewayTestServer(t, func(_ *gatewayTestServer, _ int, ws *websocket.Conn) {
+	server := newGatewayTestServer(t, func(server *gatewayTestServer, _ int, ws *websocket.Conn) {
 		if err := writeGatewayHello(ws, time.Second); err != nil {
 			return
 		}
@@ -1273,4 +1274,135 @@ func TestSessionCloseWaitsForLifetimeVoiceRoutines(t *testing.T) {
 		t.Fatal("Session.Close returned before the lifetime voice routine stopped")
 	}
 	assertGatewayClosed(t, session)
+}
+
+func TestSessionCloseStopsVoiceReconnectRoutine(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = session.beginGatewayLifecycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	voice := &VoiceConnection{
+		GuildID:   "guild",
+		ChannelID: "channel",
+		session:   session,
+	}
+	if started := session.startVoiceRoutine(voice.reconnect); !started {
+		t.Fatal("voice reconnect routine did not start")
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		voice.RLock()
+		reconnecting := voice.reconnecting
+		voice.RUnlock()
+		if reconnecting {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("voice reconnect routine did not enter reconnecting state")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- session.Close() }()
+	select {
+	case err = <-closeDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Session.Close waited for a canceled voice reconnect routine")
+	}
+	assertGatewayClosed(t, session)
+}
+
+func TestServerHeartbeatBypassesGatewayRateLimitQueue(t *testing.T) {
+	serverResult := make(chan error, 1)
+	server := newGatewayTestServer(t, func(server *gatewayTestServer, _ int, ws *websocket.Conn) {
+		fail := func(err error) {
+			select {
+			case serverResult <- err:
+			default:
+			}
+		}
+
+		if err := writeGatewayHello(ws, time.Hour); err != nil {
+			fail(err)
+			return
+		}
+		operation, _, err := readGatewayOperation(ws)
+		if err != nil {
+			fail(err)
+			return
+		}
+		if operation != 2 {
+			fail(fmt.Errorf("first Gateway operation = %d, want identify", operation))
+			return
+		}
+		if err := writeGatewayReady(ws, server.url, "heartbeat-priority"); err != nil {
+			fail(err)
+			return
+		}
+
+		for i := 0; i < gatewaySendLimit-1; i++ {
+			operation, _, err = readGatewayOperation(ws)
+			if err != nil {
+				fail(err)
+				return
+			}
+			if operation != 3 {
+				fail(fmt.Errorf("application Gateway operation %d = %d, want update status", i, operation))
+				return
+			}
+		}
+
+		if err := ws.WriteJSON(map[string]interface{}{"op": 1, "d": nil}); err != nil {
+			fail(err)
+			return
+		}
+		_ = ws.SetReadDeadline(time.Now().Add(time.Second))
+		operation, _, err = readGatewayOperation(ws)
+		if err != nil {
+			fail(fmt.Errorf("timed out waiting for server heartbeat response: %w", err))
+			return
+		}
+		if operation != 1 {
+			fail(fmt.Errorf("server heartbeat response operation = %d, want heartbeat", operation))
+			return
+		}
+		serverResult <- nil
+	})
+
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.gateway = server.url
+	if err := session.Open(); err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	for i := 0; i < gatewaySendLimit-1; i++ {
+		if err := session.GatewayWriteStruct(map[string]interface{}{
+			"op": 3,
+			"d":  map[string]interface{}{},
+		}); err != nil {
+			t.Fatalf("application Gateway write %d: %v", i, err)
+		}
+	}
+
+	select {
+	case err := <-serverResult:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server heartbeat response test timed out")
+	}
 }

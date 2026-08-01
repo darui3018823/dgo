@@ -425,7 +425,8 @@ func (b *Bucket) ResetAfter() time.Duration {
 // Release unlocks the bucket and applies Discord's response headers.
 func (b *Bucket) Release(headers http.Header) error {
 	defer b.Unlock()
-	atomic.StoreInt64(&b.lastUsed, time.Now().UnixNano())
+	lastUsed := time.Now().UnixNano()
+	atomic.StoreInt64(&b.lastUsed, lastUsed)
 
 	if headers == nil {
 		return nil
@@ -438,10 +439,6 @@ func (b *Bucket) Release(headers http.Header) error {
 	resetAfter := headers.Get("X-RateLimit-Reset-After")
 	bucketHash := headers.Get("X-RateLimit-Bucket")
 	scope := RateLimitScope(strings.ToLower(headers.Get("X-RateLimit-Scope")))
-
-	if bucketHash != "" && b.ratelimiter != nil {
-		b.ratelimiter.registerBucketHash(b, bucketHash)
-	}
 
 	if scope != "" {
 		b.Scope = scope
@@ -490,10 +487,23 @@ func (b *Bucket) Release(headers http.Header) error {
 		}
 		b.Remaining = int(parsedRemaining)
 	}
+
+	if bucketHash != "" && b.ratelimiter != nil {
+		canonical := b.ratelimiter.registerBucketHash(b, bucketHash)
+		if canonical != b {
+			canonical.Lock()
+			canonical.Scope = b.Scope
+			canonical.Limit = b.Limit
+			canonical.Remaining = b.Remaining
+			canonical.reset = b.reset
+			canonical.Unlock()
+			atomic.StoreInt64(&canonical.lastUsed, lastUsed)
+		}
+	}
 	return nil
 }
 
-func (r *RateLimiter) registerBucketHash(bucket *Bucket, hash string) {
+func (r *RateLimiter) registerBucketHash(bucket *Bucket, hash string) *Bucket {
 	now := time.Now()
 	origin := bucket.Key
 	if bucket.RouteKey != "" {
@@ -510,7 +520,7 @@ func (r *RateLimiter) registerBucketHash(bucket *Bucket, hash string) {
 		if current, ok := r.buckets[origin]; ok && current == bucket && existing != bucket {
 			delete(r.buckets, origin)
 		}
-		return
+		return existing
 	}
 
 	if current, ok := r.buckets[origin]; ok && current == bucket {
@@ -519,6 +529,7 @@ func (r *RateLimiter) registerBucketHash(bucket *Bucket, hash string) {
 	r.makeBucketRoomLocked(1)
 	r.buckets[target] = bucket
 	r.setBucketHashLocked(origin, target, now)
+	return bucket
 }
 
 // ApplyGlobalLimit records a global deadline learned from a 429 body.

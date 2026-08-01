@@ -434,6 +434,41 @@ func (s *Session) writeGatewayCurrent(data interface{}) error {
 	return err
 }
 
+// writeGatewayPriorityCurrent writes a Gateway control packet without waiting
+// behind application traffic already rate-limited by the outbound queue. The
+// Gateway requires server-requested heartbeats to be sent within five seconds,
+// so this path only bypasses the queue for protocol-critical control traffic.
+func (s *Session) writeGatewayPriorityCurrent(data interface{}) error {
+	s.gatewayLifecycleMu.Lock()
+	conn := s.gatewayConnection
+	s.gatewayLifecycleMu.Unlock()
+	if conn != nil {
+		if conn.ws == nil {
+			return ErrWSNotFound
+		}
+		if err := conn.ctx.Err(); err != nil {
+			return err
+		}
+		s.wsMutex.Lock()
+		defer s.wsMutex.Unlock()
+		if err := conn.ctx.Err(); err != nil {
+			return err
+		}
+		return conn.ws.WriteJSON(data)
+	}
+
+	s.RLock()
+	wsConn := s.wsConn
+	s.RUnlock()
+	if wsConn == nil {
+		return ErrWSNotFound
+	}
+	s.wsMutex.Lock()
+	err := wsConn.WriteJSON(data)
+	s.wsMutex.Unlock()
+	return err
+}
+
 func (s *Session) authenticateGatewayGeneration(conn *gatewayConnectionLifecycle, connectGateway string) error {
 	token := s.gatewayToken()
 	sequence := atomic.LoadInt64(s.sequence)
@@ -1478,7 +1513,7 @@ func (s *Session) onEvent(messageType int, message []byte) (*Event, error) {
 	// Must respond with a heartbeat packet within 5 seconds
 	if e.Operation == 1 {
 		s.log(LogInformational, "sending heartbeat in response to Op1")
-		err = s.writeGatewayCurrent(heartbeatOp{1, atomic.LoadInt64(s.sequence)})
+		err = s.writeGatewayPriorityCurrent(heartbeatOp{1, atomic.LoadInt64(s.sequence)})
 		if err != nil {
 			s.log(LogError, "error sending heartbeat in response to Op1")
 			return e, err

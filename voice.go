@@ -1710,6 +1710,10 @@ func decodeVoicePacket(data []byte, aead cipher.AEAD) (*Packet, error) {
 func (v *VoiceConnection) reconnect() {
 
 	v.log(LogInformational, "called")
+	ctx := v.voiceContext()
+	if err := ctx.Err(); err != nil {
+		return
+	}
 
 	v.Lock()
 	if v.reconnecting {
@@ -1732,7 +1736,9 @@ func (v *VoiceConnection) reconnect() {
 	wait := time.Duration(1)
 	for {
 
-		<-time.After(wait * time.Second)
+		if err := waitVoiceContext(ctx, wait*time.Second); err != nil {
+			return
+		}
 		wait *= 2
 		if wait > 600 {
 			wait = 600
@@ -1745,6 +1751,9 @@ func (v *VoiceConnection) reconnect() {
 		mute := v.mute
 		deaf := v.deaf
 		v.RUnlock()
+		if err := ctx.Err(); err != nil {
+			return
+		}
 		if session == nil {
 			v.log(LogInformational, "cannot reconnect voice connection without a session")
 			return

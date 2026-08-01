@@ -2074,3 +2074,76 @@ major releaseでの破壊的変更を推奨する。
 - [dgo latest release](https://github.com/darui3018823/dgo/releases/tag/v0.30.6)
 - [upstream discordgo](https://github.com/bwmarrin/discordgo)
 
+---
+
+# 14. 監査対応の進捗（2026-08-01追記）
+
+この節は監査後の修正状況を記録する追記である。監査当日の所見と検証結果は、履歴として前節までに残している。
+
+## 14.1 現在位置
+
+- 作業ブランチ: `codex/fix-all-audit-2026-07-29`
+- `master`: 監査対象コミット`1d4f1613163a8029d7ce6368dc687571fcdd52ac`のまま
+- 作業ブランチ: `master`より83 commits先行
+  - 監査レポート追加: 1 commit
+  - 監査後の対応・checkpoint: 82 commits
+- worktree: 追記前はclean
+- 最新commit: `3f7da0b chore(audit): checkpoint unfinished gateway work`
+
+最新commitは、Voice reconnect、Identify concurrency、Shard managerの作業を保存した意図的な未完成checkpointである。commit messageにも「現時点ではbuildできない」と明記されているため、監査対応は完了しておらず、release可能な状態でもない。
+
+## 14.2 Phase別進捗
+
+| Phase | 状態 | 補足 |
+| --- | --- | --- |
+| Phase 0: Release停止・安全確保 | ほぼ完了 | credential logging、非公開Invite Accept、SECURITY.md、Voice録音example等を対応済み。 |
+| Phase 1: Gateway state machine | 対応中 | OP9、close recovery、resume URL、heartbeat、lifetime contextは対応済み。Identify coordinatorとShard managerは実装途中。Gateway send limiterは未実装。 |
+| Phase 2: Voice/DAVE | 対応中 | event順序、RTP bounds check、DAVE fail-closed、MLS group state、Session.CloseからのVoice cleanupは対応済み。Voice reconnect刷新はcheckpointのまま。 |
+| Phase 3: REST・Concurrency | 概ね実装済み | bounded retry、global wait、bucket partition/eviction、response上限、handler lock/panic対策等を追加済み。現HEADでの全test再検証は未完了。 |
+| Phase 4: Current Discord API correctness | 主要項目は概ね実装済み | pagination、modal、pins、permission、soundboard、Voice Channel Info、Entry Point、model更新等を追加済み。 |
+| Phase 5: Deprecated API cleanup | 部分完了 | 危険・廃止routeは通常利用できないerror stubへ変更済み。互換性維持のためpublic symbol自体は残る。 |
+| Phase 6: Repo/Release | ローカル変更は概ね実装済み | nested module CI、Go version、release gate、coverage、dependency、docs等を更新済み。ただし現HEADがbuild不能のためCI完了条件は満たさない。 |
+
+## 14.3 現在のblocker
+
+2026-08-01時点の`go test ./...`はroot packageのcompileで失敗する。直接の不整合は`voice.go`にある。
+
+1. `opusSender`呼び出しへ`context.Context`を追加したが、関数定義が旧signatureのまま。
+2. `opusReceiver`呼び出しへ`context.Context`を追加したが、関数定義が旧signatureのまま。
+3. `VoiceConnection`から`hasDAVESequence`と`lastDAVESequence`を除いた一方、DAVE binary handlerが引き続き参照している。
+
+このcompile failureにより、新規`sharding.go`と`sharding_test.go`を含むroot testはまだ実行段階へ到達していない。`mls` package単体は同じ`go test ./...`実行内で成功している。
+
+また、`GatewayWriteStruct`は現在もWebSocketへ直接書き込んでおり、監査完了条件の「Gateway send limiterが120/60秒を超えない」は未達である。
+
+## 14.4 再開地点と順序
+
+監査作業を最初からやり直す必要はない。最新checkpoint `3f7da0b`を保持したまま、次の順序で再開する。
+
+1. `voice.go`のcontext対応signatureとDAVE sequence stateの不整合を修正し、root packageをbuild可能に戻す。
+2. `go test ./...`を実行し、Voice reconnect、Identify coordinator、Shard managerのtest failureを順に解消する。
+3. Voice resume、close code、reconnect、goroutine cancellationの動作を完成させる。
+4. Gateway outbound write queue/rate limiterを実装し、120 events / 60 secondsのfixture testを追加する。
+5. rootとnested modulesについてtest、race detector、vet、staticcheck、govulncheck、coverage gateを再実行する。
+6. 実Discord Gateway、Voice、DAVE sessionを使ったE2E・interop試験を行う。
+7. 本レポートの「修正完了条件」を再判定し、各条件の検証結果を記録して監査対応をcloseする。
+
+したがって、具体的な再開地点はPhase 1全体の開始ではなく、`3f7da0b`で中断したVoice reconnectのcompile修復である。その後、同checkpointのIdentify/shardingを検証し、未実装のGateway send limiterへ進む。
+
+## 14.5 項目1〜4の対応結果（2026-08-01追記）
+
+Section 14.4の項目1〜4に着手し、次を実装した。
+
+1. `voice.go`の`opusSender`/`opusReceiver`へ`context.Context`を正しく伝播し、Session lifetime cancellationとVoice close signalの双方で終了するようにした。DAVE binary sequence state（`hasDAVESequence`、`lastDAVESequence`）を`VoiceConnection`へ復元し、Voice transport close時にresetするようにした。
+2. `go test ./...`を実行し、Voice reconnect、Identify coordinator、Shard managerを含むroot moduleのtestを成功させた。
+3. Voice resume、close code、reconnect、goroutine cancellationの既存fixtureを成功させた。Voice close code 4015はresumeとして扱い、fatal codeは再接続しない状態を維持している。
+4. Gateway世代ごとの単一 outbound write queueを追加した。Identify、Resume、heartbeat、Op1 heartbeat応答、Status、Guild Members、`GatewayWriteStruct`をqueueへ集約し、120 events / 60 secondsのrolling window rate limiterを適用した。120件までは即時送信し、121件目は最初の送信から60秒後まで待つfixture testを追加した。
+
+検証結果:
+
+- `go test ./...`: 成功
+- `go test -race ./...`: 成功
+- `go vet ./...`: 成功
+- `TestGatewayOutboundRateLimiterFixture`: 成功
+
+実装コミットは`5dbf6bc fix(gateway): serialize and rate limit outbound writes`である。Section 14.4の項目5〜7（nested moduleを含む追加検証、実Discord Gateway/Voice/DAVE interop、修正完了条件の再判定）は未着手である。

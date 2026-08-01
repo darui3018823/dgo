@@ -689,11 +689,16 @@ type helloOp struct {
 const FailedHeartbeatAcks = 1
 
 // HeartbeatLatency returns the latency between heartbeat acknowledgement and heartbeat send.
+// It returns zero until a heartbeat has been sent and acknowledged.
 func (s *Session) HeartbeatLatency() time.Duration {
 	s.RLock()
-	latency := s.LastHeartbeatAck.Sub(s.LastHeartbeatSent)
+	sent := s.LastHeartbeatSent
+	ack := s.LastHeartbeatAck
 	s.RUnlock()
-	return latency
+	if sent.IsZero() || ack.IsZero() || ack.Before(sent) {
+		return 0
+	}
+	return ack.Sub(sent)
 }
 
 // MissedHeartbeatAcks returns the cumulative number of Gateway reconnects

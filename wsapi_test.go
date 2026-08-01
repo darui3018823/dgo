@@ -472,6 +472,9 @@ func TestHeartbeatMetricsAndJitter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if latency := session.HeartbeatLatency(); latency != 0 {
+		t.Fatalf("latency before the first heartbeat = %s, want 0", latency)
+	}
 	sent := time.Unix(100, 0)
 	ack := sent.Add(25 * time.Millisecond)
 	session.Lock()
@@ -480,6 +483,12 @@ func TestHeartbeatMetricsAndJitter(t *testing.T) {
 	session.Unlock()
 	if latency := session.HeartbeatLatency(); latency != 25*time.Millisecond {
 		t.Fatalf("latency = %s, want 25ms", latency)
+	}
+	session.Lock()
+	session.LastHeartbeatAck = sent.Add(-time.Nanosecond)
+	session.Unlock()
+	if latency := session.HeartbeatLatency(); latency != 0 {
+		t.Fatalf("latency with an acknowledgement before send = %s, want 0", latency)
 	}
 	atomic.AddUint64(&session.missedHeartbeatAcks, 2)
 	if missed := session.MissedHeartbeatAcks(); missed != 2 {

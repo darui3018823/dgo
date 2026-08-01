@@ -411,6 +411,23 @@ func (s *Session) authenticateGatewayGeneration(conn *gatewayConnectionLifecycle
 	sessionID := s.sessionID
 	s.gatewaySessionMu.RUnlock()
 	if sessionID == "" {
+		s.RLock()
+		coordinator := s.IdentifyCoordinator
+		shardID := s.ShardID
+		if s.Identify.Shard != nil {
+			shardID = s.Identify.Shard[0]
+		}
+		s.RUnlock()
+		if coordinator != nil {
+			if err := coordinator.Acquire(conn.ctx, shardID); err != nil {
+				return fmt.Errorf(
+					"error waiting to identify shard %d with gateway %s: %w",
+					shardID,
+					connectGateway,
+					err,
+				)
+			}
+		}
 		if err := s.identify(conn.ws); err != nil {
 			return fmt.Errorf("error sending identify packet to gateway %s: %w", connectGateway, err)
 		}

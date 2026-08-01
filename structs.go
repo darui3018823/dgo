@@ -74,6 +74,11 @@ type Session struct {
 	ShardID    int
 	ShardCount int
 
+	// IdentifyCoordinator gates fresh Identify requests by Discord's
+	// session-start quota and max_concurrency buckets. Resume bypasses it.
+	// ShardManager configures this automatically for every managed Session.
+	IdentifyCoordinator *IdentifyCoordinator
+
 	// Should state tracking be enabled.
 	// State tracking is the best way for getting the users
 	// active guilds and the members of the guilds.

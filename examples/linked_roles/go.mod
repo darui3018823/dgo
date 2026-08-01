@@ -5,7 +5,7 @@ go 1.26.5
 replace github.com/darui3018823/dgo => ../../
 
 require (
-	github.com/darui3018823/dgo v0.30.6
+	github.com/darui3018823/dgo v1.0.0
 	github.com/joho/godotenv v1.5.1
 	golang.org/x/oauth2 v0.35.0
 )

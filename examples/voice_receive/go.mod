@@ -5,7 +5,7 @@ go 1.26.5
 replace github.com/darui3018823/dgo => ../../
 
 require (
-	github.com/darui3018823/dgo v0.30.6
+	github.com/darui3018823/dgo v1.0.0
 	github.com/pion/rtp v1.10.5
 	github.com/pion/webrtc/v3 v3.3.6
 )

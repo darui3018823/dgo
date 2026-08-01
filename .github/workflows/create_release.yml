@@ -32,6 +32,12 @@ jobs:
         run: |
           PREV_TAG="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)"
           CURRENT_TAG="${GITHUB_REF#refs/tags/}"
+          RELEASE_NOTES="docs/releases/${CURRENT_TAG}.md"
+
+          if [ -f "${RELEASE_NOTES}" ]; then
+            cp "${RELEASE_NOTES}" CHANGELOG.md
+            exit 0
+          fi
 
           {
             echo "## What's Changed"
@@ -51,5 +57,5 @@ jobs:
         with:
           body_path: CHANGELOG.md
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: false

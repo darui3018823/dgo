@@ -3,6 +3,18 @@
 This document describes migration from upstream discordgo or older dgo
 releases and defines how dgo changes its public API.
 
+## v1.0.0 baseline
+
+v1.0.0 establishes dgo's stable public API and compatibility policy. Upgrade
+from v0.30.x by using the v1 module version explicitly, then review the
+behavior changes in the next section and the full
+[v1.0.0 release notes](releases/v1.0.0.md).
+
+```sh
+go get github.com/darui3018823/dgo@v1.0.0
+go mod tidy
+```
+
 ## Migrating the module path
 
 Replace old imports with the dgo module:
@@ -62,8 +74,8 @@ annotations.
 
 ## Compatibility and deprecation policy
 
-dgo follows Semantic Versioning, with the additional caution that the current
-`v0` release line may contain documented breaking changes in a minor release.
+dgo follows Semantic Versioning. v1.0.0 is the stable compatibility baseline;
+future breaking changes require a new major version.
 
 - Safe source compatibility is preferred for public names and common call
   patterns.

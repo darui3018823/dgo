@@ -17,4 +17,5 @@ nav:
     - 'Getting Started': 'GettingStarted.md'
     - 'API Inventory': 'API.md'
     - 'Migration': 'Migration.md'
+    - 'v1.0.0 Release Notes': 'releases/v1.0.0.md'
     - 'Upstream Sync': 'UpstreamSync.md'

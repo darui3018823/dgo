@@ -8,9 +8,9 @@ available.
 
 | Version | Supported |
 | --- | --- |
-| Latest release | Yes |
+| `v1.0.x` | Yes |
 | `master` | Yes, pre-release |
-| Older releases | No |
+| `v0.x` and older releases | No |
 
 ## Reporting a vulnerability
 

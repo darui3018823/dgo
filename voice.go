@@ -1871,6 +1871,15 @@ func (v *VoiceConnection) handleDAVEBinary(message []byte) {
 			v.recoverDAVEGroup(transitionID, dave)
 			return
 		}
+		if transitionID == 0 {
+			if err := dave.HandleExecuteTransition(transitionID); err != nil {
+				v.log(LogError, "DAVE initial commit transition failed: %s", err)
+				v.recoverDAVEGroup(transitionID, dave)
+				return
+			}
+			v.log(LogInformational, "DAVE initial commit transition activated")
+			return
+		}
 		v.sendDAVEReadyForTransition(transitionID)
 
 	case 30:
@@ -1899,6 +1908,15 @@ func (v *VoiceConnection) handleDAVEBinary(message []byte) {
 		if err := dave.HandlePrepareTransition(transitionID, 1); err != nil {
 			v.log(LogError, "DAVE welcome transition preparation failed: %s", err)
 			v.recoverDAVEGroup(transitionID, dave)
+			return
+		}
+		if transitionID == 0 {
+			if err := dave.HandleExecuteTransition(transitionID); err != nil {
+				v.log(LogError, "DAVE initial welcome transition failed: %s", err)
+				v.recoverDAVEGroup(transitionID, dave)
+				return
+			}
+			v.log(LogInformational, "DAVE initial welcome transition activated")
 			return
 		}
 		v.log(LogInformational, "DAVE encryption prepared after Welcome")
@@ -1932,6 +1950,8 @@ func (v *VoiceConnection) handleDAVEPrepareTransition(data json.RawMessage) {
 		if msg.TransitionID == 0 {
 			if err := dave.HandleExecuteTransition(0); err != nil {
 				v.log(LogError, "DAVE immediate transition failed: %s", err)
+			} else {
+				v.log(LogInformational, "DAVE initial transition activated")
 			}
 			return
 		}

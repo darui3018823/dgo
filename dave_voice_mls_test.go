@@ -108,6 +108,50 @@ func TestVoiceDAVEProposalCommitWelcomeLifecycle(t *testing.T) {
 	}
 }
 
+func TestVoiceDAVEInitialCommitActivatesWithoutGatewayAck(t *testing.T) {
+	const (
+		channelID   = "9005"
+		aliceUserID = "3"
+		bobUserID   = "4"
+	)
+	groupID := make([]byte, 8)
+	binary.BigEndian.PutUint64(groupID, 9005)
+	externalSender, externalKey := testDAVEExternalSender(t)
+
+	alice := NewDAVESession(aliceUserID)
+	if err := alice.Configure(channelID, 1, []string{aliceUserID, bobUserID}); err != nil {
+		t.Fatalf("alice Configure: %v", err)
+	}
+	testDAVEKeyPackage(t, alice)
+	if err := alice.HandleExternalSenderPackage(externalSender); err != nil {
+		t.Fatalf("alice HandleExternalSenderPackage: %v", err)
+	}
+
+	bob := NewDAVESession(bobUserID)
+	if err := bob.Configure(channelID, 1, []string{aliceUserID, bobUserID}); err != nil {
+		t.Fatalf("bob Configure: %v", err)
+	}
+	if err := bob.HandleExternalSenderPackage(externalSender); err != nil {
+		t.Fatalf("bob HandleExternalSenderPackage: %v", err)
+	}
+	addBob := testDAVEAddProposal(t, groupID, testDAVEKeyPackage(t, bob), externalKey)
+
+	aliceClient, alicePeer := testWebsocketPair(t)
+	aliceVoice := &VoiceConnection{LogLevel: -1, dave: alice, wsConn: aliceClient}
+	aliceVoice.handleDAVEBinary(testDAVEBinaryMessage(1, 27, append([]byte{0}, testDAVETLSVector(addBob)...)))
+	_, opcode28 := readDAVETestMessage(t, alicePeer)
+	commit, _ := splitDAVECommitWelcome(t, opcode28[1:])
+
+	commitPayload := make([]byte, 2, 2+len(commit))
+	// Transition ID 0 is the initial transition. Discord does not acknowledge
+	// OP23 for it, so the session must become active when OP29 is processed.
+	commitPayload = append(commitPayload, commit...)
+	aliceVoice.handleDAVEBinary(testDAVEBinaryMessage(2, 29, commitPayload))
+	if !alice.IsActive() {
+		t.Fatal("initial opcode 29 did not activate Alice's DAVE session")
+	}
+}
+
 func testDAVEExternalSender(t *testing.T) ([]byte, *ciphersuite.SignaturePrivateKey) {
 	t.Helper()
 	credential, key, err := credentials.GenerateCredentialWithKeyForCS(

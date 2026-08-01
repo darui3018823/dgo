@@ -1,6 +1,6 @@
 module github.com/darui3018823/dgo
 
-go 1.26.0
+go 1.26.5
 
 require (
 	github.com/cloudflare/circl v1.6.4

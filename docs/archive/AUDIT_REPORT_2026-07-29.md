@@ -1,5 +1,7 @@
 # dgo 総合監査レポート
 
+> これは2026-07-29時点の監査結果と、その後の対応履歴を保存したアーカイブ資料です。監査対象は当時のcommitであり、現在のリリース状態を直接示す文書ではありません。監査対応はmerge commit `e3eb634`へ反映され、`v1.0.0-rc.1` tagが付与されています。最新の方針やAPI互換性については、[Migration.md](../Migration.md)と[API.md](../API.md)を参照してください。
+
 - 対象リポジトリ: `github.com/darui3018823/dgo`
 - 対象コミット: `1d4f1613163a8029d7ce6368dc687571fcdd52ac`
 - 対象ブランチ: `master`
@@ -2071,7 +2073,8 @@ major releaseでの破壊的変更を推奨する。
 ## Repository
 
 - [dgo GitHub Actions](https://github.com/darui3018823/dgo/actions)
-- [dgo latest release](https://github.com/darui3018823/dgo/releases/tag/v0.30.6)
+- [dgo latest stable release](https://github.com/darui3018823/dgo/releases/tag/v0.30.6)
+- [dgo v1.0.0-rc.1 source tag](https://github.com/darui3018823/dgo/tree/v1.0.0-rc.1)
 - [upstream discordgo](https://github.com/bwmarrin/discordgo)
 
 ---
@@ -2187,9 +2190,22 @@ malformed RTPについては`go test -fuzz=FuzzDecodeVoicePacket -fuzztime=10s`�
 | debug logにcredentialを出さない | PASS | REST、Gateway、Voiceのredaction tests |
 | Interaction body上限 | PASS | `interactions_test.go`のbody over limit tests |
 | handler内Add/Removeでdeadlockしない | PASS | `TestSyncHandlerCanModifyHandlers` |
-| nested modulesを含むCI | LOCAL PASS / remote未確認 | 3 moduleのtest/race/vet/staticcheck/coverage/build。GitHub Actions自体は未実行 |
+| nested modulesを含むCI | PASS | 3 moduleのローカル検証、およびmerge commit `e3eb634`に対するGitHub Actions |
 | deprecated/private routeを通常利用できない | PASS | `TestRemovedPublicAPIRoutesFailWithoutRequests` |
 | current modal、pins、permission、pagination fixture | PASS | modal/pins/permission/pagination tests |
-| race detectorとgovulncheckがrelease workflowで成功 | LOCAL PASS / workflow未確認 | 3 moduleで実行。release workflow自体は未実行 |
+| race detectorとgovulncheckがrelease workflowで成功 | PASS | Create Release workflow `30704299605`のVerify release job |
 
-以上により、ローカル検証可能な条件は満たした。ただし、実Discord E2E・interopとGitHub Actions/release workflowの実行結果が未取得のため、この時点では監査対応を`close`しない。closeには、検証用Botの資格情報を用いた項目6の実行と、対象commitに対するCI/release workflowの成功確認が残っている。
+以上により、ローカル検証可能な条件と、対象commitに対するGitHub Actions/release workflowの検証は完了した。実Discord E2E・interopは検証用資格情報がないため未実施であり、完全な実サービス検証まで完了したとは扱わない。
+
+## 14.7 merge・RC tag後の現在状態（2026-08-01追記）
+
+監査対応を含むPR #4は`master`へmergeされ、次の状態になっている。
+
+- merge commit: `e3eb63433733b32deba5c2f8c4414f9e404af2f8`
+- PR: [#4](https://github.com/darui3018823/dgo/pull/4)
+- release candidate tag: `v1.0.0-rc.1`
+- merge commitのCI: [success](https://github.com/darui3018823/dgo/actions/runs/30703694930)
+- merge commitのCodeQL: [success](https://github.com/darui3018823/dgo/actions/runs/30703694948)
+- RC tagのCreate Release workflow: [success](https://github.com/darui3018823/dgo/actions/runs/30704299605)
+
+したがって、監査対応の実装、ローカル検証、remote CI検証、RC tag作成までを完了状態とする。一方、実Discord Gateway、Voice、DAVEとのE2E・interopは未実施という制限を残す。

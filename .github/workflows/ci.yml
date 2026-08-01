@@ -38,6 +38,20 @@ jobs:
       - name: Check workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
+  docs:
+    name: Build documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - name: Install documentation dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements-docs.txt
+      - name: Build documentation
+        run: mkdocs build --clean --strict --site-dir site
+
   test:
     name: Test ${{ matrix.module.name }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

@@ -74,10 +74,12 @@ go run .
 
 ## Safe defaults
 
-- `New` defaults to `IntentsNone`. Add only the intents required by the bot.
+- `New`, `NewBot`, and `NewOAuth2` default to `IntentsNone`. Add only the
+  intents required by the bot before opening a Gateway connection.
 - Messages default to an empty `allowed_mentions.parse` list. Opt in to
   mentions explicitly when needed.
-- Gateway connections require a non-empty token prefixed with `Bot `.
+- `NewBot` accepts a raw bot token and adds the required `Bot ` prefix. If you
+  use the generic `New` constructor, pass the full `Bot <token>` credential.
 - Interaction and webhook tokens may appear in request URLs; dgo redacts them
   from its diagnostic metadata and logs.
 
@@ -87,7 +89,7 @@ Portal. See Discord's
 
 ## Next steps
 
-- Browse the [examples](../examples).
+- Browse the [examples on GitHub](https://github.com/darui3018823/dgo/tree/master/examples).
 - Review the [migration and compatibility guide](Migration.md).
 - Check the [public API inventory](API.md).
 - Use the [package reference](https://pkg.go.dev/github.com/darui3018823/dgo)

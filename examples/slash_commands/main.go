@@ -26,7 +26,7 @@ func init() { flag.Parse() }
 
 func init() {
 	var err error
-	s, err = dgo.New("Bot " + *BotToken)
+	s, err = dgo.NewBot(*BotToken)
 	if err != nil {
 		log.Fatalf("Invalid bot parameters: %v", err)
 	}

@@ -29,7 +29,7 @@ an alias for this module.
 | Area | dgo behavior | Migration |
 | --- | --- | --- |
 | Go version | Go 1.26.5 or newer | Update the toolchain before upgrading. |
-| Gateway credentials | Only non-empty `Bot ` credentials may connect | Keep bot tokens out of source control and add the prefix when calling `New`. |
+| Gateway credentials | Only non-empty `Bot ` credentials may connect | Keep bot tokens out of source control. Pass a raw token to `NewBot`, or pass the full `Bot <token>` credential to `New`. |
 | Default intents | `IntentsNone` | Set the smallest required intent set before `Open`. |
 | Allowed mentions | Parsing is disabled by default | Supply `MessageAllowedMentions` when mentions are intentional. |
 | Version reporting | Derived from Go build information | Use `Version()` or `VERSION`; do not assume a hard-coded release string. |

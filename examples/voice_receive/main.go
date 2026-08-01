@@ -96,7 +96,7 @@ func main() {
 		fmt.Println("Recording is disabled; received audio will not be written to files. Use -record only after satisfying the README safety requirements.")
 	}
 
-	s, err := dgo.New("Bot " + Token)
+	s, err := dgo.NewBot(Token)
 	if err != nil {
 		fmt.Println("error creating Discord session:", err)
 		return

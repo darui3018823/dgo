@@ -9,7 +9,7 @@ used during releases.
 
 | Surface | Primary entry points |
 | --- | --- |
-| Session and configuration | `New`, `Session`, `Version`, request options |
+| Session and configuration | `New`, `NewBot`, `NewOAuth2`, `Session`, `Version`, request options |
 | REST | Typed `Session` methods and the low-level `Request*` methods |
 | Gateway | `Open`, `OpenWithContext`, event handlers, intents, state |
 | Voice and DAVE | `VoiceConnection`, voice join methods, packet channels |

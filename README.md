@@ -29,7 +29,8 @@ Import the package as `dgo`:
 import "github.com/darui3018823/dgo"
 ```
 
-Create a bot session with an explicitly prefixed bot token:
+Create a bot session from a raw bot token. `NewBot` adds the required `Bot `
+authorization prefix:
 
 ```go
 session, err := dgo.NewBot(token)

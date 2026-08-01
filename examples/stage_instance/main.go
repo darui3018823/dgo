@@ -21,7 +21,7 @@ func init() { flag.Parse() }
 // To be correctly used, the bot needs to be in a guild.
 // All actions must be done on a stage channel event
 func main() {
-	s, _ := dgo.New("Bot " + *BotToken)
+	s, _ := dgo.NewBot(*BotToken)
 	s.AddHandler(func(s *dgo.Session, r *dgo.Ready) {
 		fmt.Println("Bot is ready")
 	})

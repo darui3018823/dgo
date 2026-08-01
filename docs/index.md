@@ -17,7 +17,7 @@ path, documentation, and issue tracker when working with this repository.
 - [Public API inventory](API.md)
 - [Upstream synchronization decisions](UpstreamSync.md)
 - [Package reference](https://pkg.go.dev/github.com/darui3018823/dgo)
-- [Examples](../examples)
+- [Examples on GitHub](https://github.com/darui3018823/dgo/tree/master/examples)
 
 ## Design goals
 

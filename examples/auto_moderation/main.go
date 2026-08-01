@@ -21,7 +21,7 @@ var (
 func init() { flag.Parse() }
 
 func main() {
-	session, _ := dgo.New("Bot " + *BotToken)
+	session, _ := dgo.NewBot(*BotToken)
 	session.Identify.Intents |= dgo.IntentAutoModerationExecution
 	session.Identify.Intents |= dgo.IntentMessageContent
 

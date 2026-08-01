@@ -80,7 +80,7 @@ func main() {
 		log.Fatal("application id is not set")
 	}
 
-	session, _ := dgo.New("Bot " + *Token)
+	session, _ := dgo.NewBot(*Token)
 
 	session.AddHandler(func(s *dgo.Session, i *dgo.InteractionCreate) {
 		if i.Type != dgo.InteractionApplicationCommand {

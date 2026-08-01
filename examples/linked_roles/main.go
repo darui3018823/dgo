@@ -37,7 +37,7 @@ var oauthConfig = oauth2.Config{
 
 var (
 	appID        = flag.String("app", "", "Application ID")
-	token        = flag.String("token", "", "Application token")
+	token        = flag.String("token", "", "Bot token")
 	clientSecret = flag.String("secret", "", "OAuth2 secret")
 	redirectURL  = flag.String("redirect", "", "OAuth2 Redirect URL")
 )
@@ -64,7 +64,7 @@ func main() {
 		log.Fatalf("build OAuth redirect URL: %v", err)
 	}
 
-	s, err := dgo.New("Bot " + *token)
+	s, err := dgo.NewBot(*token)
 	if err != nil {
 		log.Fatalf("create Discord session: %v", err)
 	}

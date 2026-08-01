@@ -1,6 +1,7 @@
 # Getting started
 
-To start off you can check out existing Pull Requests and Issues to get a gasp of what problems we’re currently solving and what features you can implement.
+To start off, check out existing pull requests and issues to get a sense of
+what problems we’re currently solving and what features you can implement.
 
 ## Issues
 
@@ -12,11 +13,13 @@ Any other conversation would belong and would be moved into “Discussions”.
 
 We use discussions for ideas, polls, announcements and help questions.
 
-Don’t hesitate to ask, we always would try to help.
+Don’t hesitate to ask; we will always try to help.
 
 ## Pull Requests
 
-If you want to help us by improving existing or adding new features, you create what’s called a Pull Request (aka PR). It allows us to review your code, suggest changes and merge it.
+If you want to help us by improving existing features or adding new ones,
+create a pull request (PR). It allows us to review your code, suggest changes,
+and merge it.
 
 Here are some tips on how to make a good first PR:
 
@@ -84,4 +87,17 @@ When naming an event, we follow gateway’s internal naming (which often matches
 
 In our REST functions we usually favor named returns instead of regular anonymous returns. This helps readability.
 
-Additionally we try to avoid naked return statements for functions with a long body. Since it’s easier to loose track of the return result.
+Additionally, we try to avoid naked return statements for functions with a
+long body, since it’s easier to lose track of the return result.
+
+## Documentation
+
+Install the documentation dependencies and build the site in strict mode:
+
+```sh
+python -m pip install -r requirements-docs.txt
+mkdocs build --clean --strict
+```
+
+When changing a public API or example, update the corresponding documentation
+and verify the rendered links with this build.

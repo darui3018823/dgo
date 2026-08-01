@@ -283,6 +283,13 @@ func TestVoiceClientsConnectOpcode(t *testing.T) {
 	if len(v.ConnectedUsers) != 2 || v.ConnectedUsers[0] != "1" || v.ConnectedUsers[1] != "2" {
 		t.Fatalf("connected users = %v, want [1 2]", v.ConnectedUsers)
 	}
+
+	// OP11 reports the users that just connected, rather than replacing the
+	// complete roster. Retain existing users for a subsequent DAVE roster update.
+	v.onEvent(false, []byte(`{"op":11,"d":{"user_ids":["2","3"]}}`))
+	if len(v.ConnectedUsers) != 3 || v.ConnectedUsers[0] != "1" || v.ConnectedUsers[1] != "2" || v.ConnectedUsers[2] != "3" {
+		t.Fatalf("connected users after incremental OP11 = %v, want [1 2 3]", v.ConnectedUsers)
+	}
 }
 
 func TestClassifyVoiceCloseCode(t *testing.T) {

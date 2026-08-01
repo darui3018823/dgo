@@ -1040,7 +1040,21 @@ func (v *VoiceConnection) onEventForGeneration(
 			return
 		}
 		v.Lock()
-		v.ConnectedUsers = append(v.ConnectedUsers[:0], clients.UserIDs...)
+		for _, userID := range clients.UserIDs {
+			if userID == "" {
+				continue
+			}
+			alreadyConnected := false
+			for _, connectedUserID := range v.ConnectedUsers {
+				if connectedUserID == userID {
+					alreadyConnected = true
+					break
+				}
+			}
+			if !alreadyConnected {
+				v.ConnectedUsers = append(v.ConnectedUsers, userID)
+			}
+		}
 		connectedUsers := append([]string(nil), v.ConnectedUsers...)
 		dave := v.dave
 		handlers := append([]VoiceClientsConnectHandler(nil), v.voiceClientsConnectHandlers...)

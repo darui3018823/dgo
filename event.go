@@ -1,5 +1,7 @@
 package dgo
 
+import "runtime/debug"
+
 // EventHandler is an interface for Discord events.
 type EventHandler interface {
 	// Type returns the type of event this handler belongs to.
@@ -41,7 +43,7 @@ func (eh interfaceEventHandler) Handle(s *Session, i interface{}) {
 
 var registeredInterfaceProviders = map[string]EventInterfaceProvider{}
 
-// registerInterfaceProvider registers a provider so that DiscordGo can
+// registerInterfaceProvider registers a provider so that dgo can
 // access it's New() method.
 func registerInterfaceProvider(eh EventInterfaceProvider) {
 	if _, exists := registeredInterfaceProviders[eh.Type()]; exists {
@@ -163,34 +165,57 @@ func (s *Session) removeEventHandlerInstance(t string, ehi *eventHandlerInstance
 	}
 }
 
+// snapshotEventHandlers copies permanent handlers and atomically consumes once
+// handlers. User callbacks must never run while handlersMu is held.
+func (s *Session) snapshotEventHandlers(t string) []*eventHandlerInstance {
+	s.handlersMu.Lock()
+	defer s.handlersMu.Unlock()
+
+	handlers := make([]*eventHandlerInstance, 0, len(s.handlers[t])+len(s.onceHandlers[t]))
+	handlers = append(handlers, s.handlers[t]...)
+	handlers = append(handlers, s.onceHandlers[t]...)
+	delete(s.onceHandlers, t)
+	return handlers
+}
+
+func (s *Session) reportHandlerPanic(event interface{}, recovered interface{}) {
+	if s.PanicHandler != nil {
+		func() {
+			defer func() {
+				if hookPanic := recover(); hookPanic != nil {
+					s.log(LogError, "event panic handler panicked while handling %T", event)
+				}
+			}()
+			s.PanicHandler(s, event, recovered)
+		}()
+		return
+	}
+	s.log(LogError, "event handler panicked for %T\n%s", event, debug.Stack())
+}
+
+func (s *Session) callEventHandler(eh *eventHandlerInstance, event interface{}) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			s.reportHandlerPanic(event, recovered)
+		}
+	}()
+	eh.eventHandler.Handle(s, event)
+}
+
 // Handles calling permanent and once handlers for an event type.
 func (s *Session) handle(t string, i interface{}) {
-	for _, eh := range s.handlers[t] {
+	for _, eh := range s.snapshotEventHandlers(t) {
 		if s.SyncEvents {
-			eh.eventHandler.Handle(s, i)
+			s.callEventHandler(eh, i)
 		} else {
-			go eh.eventHandler.Handle(s, i)
+			go s.callEventHandler(eh, i)
 		}
-	}
-
-	if len(s.onceHandlers[t]) > 0 {
-		for _, eh := range s.onceHandlers[t] {
-			if s.SyncEvents {
-				eh.eventHandler.Handle(s, i)
-			} else {
-				go eh.eventHandler.Handle(s, i)
-			}
-		}
-		s.onceHandlers[t] = nil
 	}
 }
 
 // Handles an event type by calling internal methods, firing handlers and firing the
 // interface{} event.
 func (s *Session) handleEvent(t string, i interface{}) {
-	s.handlersMu.RLock()
-	defer s.handlersMu.RUnlock()
-
 	// All events are dispatched internally first.
 	s.onInterface(i)
 
@@ -243,6 +268,9 @@ func (s *Session) onInterface(i interface{}) {
 // onReady handles the ready event.
 func (s *Session) onReady(r *Ready) {
 
-	// Store the SessionID within the Session struct.
+	// Store the resume data supplied for this specific Gateway session.
+	s.gatewaySessionMu.Lock()
 	s.sessionID = r.SessionID
+	s.resumeGatewayURL = r.ResumeGatewayURL
+	s.gatewaySessionMu.Unlock()
 }

@@ -1,75 +1,78 @@
-# dgo (discordgo Hard Fork)
+# dgo
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/darui3018823/dgo.svg)](https://pkg.go.dev/github.com/darui3018823/dgo) [![CI](https://github.com/darui3018823/dgo/actions/workflows/lint.yml/badge.svg)](https://github.com/darui3018823/dgo/actions/workflows/lint.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/darui3018823/dgo.svg)](https://pkg.go.dev/github.com/darui3018823/dgo)
+[![CI](https://github.com/darui3018823/dgo/actions/workflows/ci.yml/badge.svg)](https://github.com/darui3018823/dgo/actions/workflows/ci.yml)
 
-## ⚠️ Hard Fork Notice
+dgo is a Go library for Discord's REST, Gateway, and Voice APIs. It is an
+independent hard fork of [bwmarrin/discordgo](https://github.com/bwmarrin/discordgo)
+with its own compatibility and release policy.
 
-**This project (`dgo`) is a hard fork of [bwmarrin/discordgo](https://github.com/bwmarrin/discordgo).**
-It has been renamed and reorganized to serve as an independent library with modern features and critical voice encryption fixes.
+## Highlights
 
-### Purpose
+- Discord API v10 REST and Gateway bindings
+- Gateway event handling, state tracking, and voice connections
+- DAVE end-to-end voice encryption support
+- Context-aware REST rate limiting and bounded retries
+- Structured logging with credential redaction
+- Safe defaults: no Gateway intents and no parsed mentions unless enabled
+- Go 1.26.5 or newer
 
-This fork addresses Discord's voice encryption protocol changes (XChaCha20-Poly1305) and modernizes the codebase with updated linting, CI, and module structure.
-
-### Key Changes
-- **Renamed to `dgo`**: The package and module name are now `dgo`.
-- **Discord API v10**: Updated to the latest Discord API version.
-- **Context Support**: `OpenWithContext` and cancellable rate limit waiting.
-- **Structured Logging**: Uses `log/slog` for modern, structured logging.
-- **Improved Rate Limiter**: Supports `X-RateLimit-Bucket` headers and context cancellation.
-- **Modern Go**: Requires Go 1.21+, uses `io.ReadAll` instead of deprecated `ioutil`.
-- **Voice Encryption**: Includes critical patches for `aead_xchacha20_poly1305_rtpsize`.
-
----
-
-dgo is a [Go](https://golang.org/) package that provides low level 
-bindings to the [Discord](https://discord.com/) chat client API.
-
-Contributions and feedback are welcome! Please open an issue or pull request on GitHub.
-
-**For general Go discussion, please join the [Discord 
-Gophers](https://discord.gg/golang) chat server. For dgo-specific issues, please use [GitHub Issues](https://github.com/darui3018823/dgo/issues).**
-
-## Getting Started
-
-### Installing
+## Install
 
 ```sh
-go get github.com/darui3018823/dgo
+go get github.com/darui3018823/dgo@latest
 ```
 
-### Usage
-
-Import the package into your project.
+Import the package as `dgo`:
 
 ```go
 import "github.com/darui3018823/dgo"
 ```
 
-Construct a new Discord client which can be used to access the variety of 
-Discord API functions and to set callback functions for Discord events.
+Create a bot session from a raw bot token. `NewBot` adds the required `Bot `
+authorization prefix:
 
 ```go
-discord, err := dgo.New("Bot " + "authentication token")
+session, err := dgo.NewBot(token)
+if err != nil {
+	return err
+}
+session.Identify.Intents = dgo.IntentsGuilds
 ```
 
-See Documentation and Examples below for more detailed information.
+Gateway connections accept bot credentials only. OAuth2 bearer credentials
+may be used with applicable REST endpoints. Automated user accounts and
+private client routes are not supported.
 
 ## Documentation
 
-- [![Go Reference](https://pkg.go.dev/badge/github.com/darui3018823/dgo.svg)](https://pkg.go.dev/github.com/darui3018823/dgo) 
+- [Getting started](docs/GettingStarted.md)
+- [Migration, compatibility, and deprecation policy](docs/Migration.md)
+- [Public API inventory](docs/API.md)
+- [Package reference](https://pkg.go.dev/github.com/darui3018823/dgo)
+- [Examples](examples)
 
-## Contributing
+The exported `VERSION` value and `Version()` function are resolved from Go
+build information. Tagged module builds report their tag, pseudo-version
+builds report the pseudo-version, and local builds report a `devel` version
+with VCS information when available.
 
-- First open an issue describing the bug or enhancement so it can be discussed.  
-- Try to match current naming conventions as closely as possible.  
-- Create a Pull Request with your changes against the master branch.
+## Support and contributing
 
-## List of Discord APIs
+For dgo bugs and feature requests, use
+[GitHub Issues](https://github.com/darui3018823/dgo/issues). For general Go
+discussion, visit the [Discord Gophers](https://discord.gg/golang) community.
 
-See [this chart](https://abal.moe/Discord/Libraries.html) for a feature 
-comparison and list of other Discord API libraries.
+Before opening a pull request:
 
-## Special Thanks
+1. Open or reference an issue describing the change.
+2. Follow the repository's current naming and compatibility conventions.
+3. Run the root and nested-module verification described by CI.
+4. Target the `master` branch.
 
-[Chris Rhodes](https://github.com/iopred) - For the DiscordGo logo and tons of PRs.
+## Attribution
+
+dgo retains the BSD-3-Clause lineage and attribution of the upstream project.
+Thanks to the upstream maintainers and contributors, including
+[Chris Rhodes](https://github.com/iopred), who created the original upstream
+project logo used by the inherited documentation assets.

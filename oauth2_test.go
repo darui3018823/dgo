@@ -15,8 +15,8 @@ func ExampleApplication() {
 		return
 	}
 
-	// Create a new Discordgo session
-	dg, err := dgo.New(Token)
+	// Create a new dgo session
+	dg, err := dgo.NewOAuth2(Token)
 	if err != nil {
 		log.Println(err)
 		return

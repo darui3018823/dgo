@@ -14,7 +14,7 @@ import (
 // Bot parameters
 var (
 	GuildID  = flag.String("guild", "", "Test guild ID")
-	BotToken = flag.String("token", "", "Bot access token")
+	BotToken = flag.String("token", "", "Bot token")
 	AppID    = flag.String("app", "", "Application ID")
 	Cleanup  = flag.Bool("cleanup", true, "Cleanup of commands")
 )
@@ -25,7 +25,7 @@ func init() { flag.Parse() }
 
 func init() {
 	var err error
-	s, err = dgo.New("Bot " + *BotToken)
+	s, err = dgo.NewBot(*BotToken)
 	if err != nil {
 		log.Fatalf("Invalid bot parameters: %v", err)
 	}
@@ -85,7 +85,7 @@ var (
 				i.ApplicationCommandData().TargetID,
 			)
 			if err != nil {
-				_, err = s.FollowupMessageCreate(i.Interaction, true, &dgo.WebhookParams{
+				_, err = s.FollowupMessageCreateComplex(i.Interaction, &dgo.WebhookParams{
 					Content: fmt.Sprintf("Mission failed. Cannot send a message to this user: %q", err.Error()),
 					Flags:   dgo.MessageFlagsEphemeral,
 				})

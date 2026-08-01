@@ -1,19 +1,19 @@
-<img align="right" alt="DiscordGo logo" src="/docs/img/discordgo.svg" width="200">
+<img align="right" alt="dgo project mark" src="../../docs/img/dgo.svg" width="200">
 
-## DiscordGo Modals Example
+## dgo modals example
 
-This example demonstrates how to utilize DiscordGo to send and process text
+This example demonstrates how to use dgo to send and process text
 inputs in modals. If you have not read `slash_commands` and `components`
 examples yet it is recommended to do so before proceeding. As this example
 is built using interactions and Slash Commands.
 
-**Join [Discord Gophers](https://discord.gg/0f1SbxBZjYoCtNPP)
-Discord chat channel for support.**
+For dgo-specific problems, use [GitHub Issues](https://github.com/darui3018823/dgo/issues).
+For general Go discussion, visit [Discord Gophers](https://discord.gg/golang).
 
 ### Build
 
 This assumes you already have a working Go environment setup and that
-DiscordGo is correctly installed on your system.
+Go 1.26.5 or newer and the module dependencies are available.
 
 From within the modals example folder, run the below command to compile the
 example.
@@ -25,7 +25,8 @@ go build
 ### Usage
 
 ```
-Usage of modals:
+./modals --help
+Usage of ./modals:
   -app string
     	Application ID
   -cleanup
@@ -35,11 +36,11 @@ Usage of modals:
   -results string
     	Channel where send survey results to
   -token string
-    	Bot access token
+        Bot token
 ```
 
 The below example shows how to start the bot from the modals example folder.
 
 ```sh
-./modals -app YOUR_APPLICATION_ID -guild YOUR_TESTING_GUILD -results YOUR_TESTING_CHANNEL -token YOUR_BOT_TOKEN
+./modals -app YOUR_APPLICATION_ID -guild YOUR_TESTING_GUILD_ID -results YOUR_RESULTS_CHANNEL_ID -token YOUR_BOT_TOKEN
 ```

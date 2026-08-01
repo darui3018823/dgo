@@ -1,16 +1,16 @@
-<img align="right" alt="DiscordGo logo" src="/docs/img/discordgo.svg" width="200">
+<img align="right" alt="dgo project mark" src="../../docs/img/dgo.svg" width="200">
 
-## DiscordGo Stage Instance Example
+## dgo stage instance example
 
-This example demonstrates how to utilize DiscordGo to manage stage instances.
+This example demonstrates how to use dgo to manage stage instances.
 
-**Join [Discord Gophers](https://discord.gg/0f1SbxBZjYoCtNPP)
-Discord chat channel for support.**
+For dgo-specific problems, use [GitHub Issues](https://github.com/darui3018823/dgo/issues).
+For general Go discussion, visit [Discord Gophers](https://discord.gg/golang).
 
 ### Build
 
 This assumes you already have a working Go environment setup and that
-DiscordGo is correctly installed on your system.
+Go 1.26.5 or newer and the module dependencies are available.
 
 From within the stage_instance example folder, run the below command to compile the
 example.
@@ -22,7 +22,8 @@ go build
 ### Usage
 
 ```
-Usage of stage_instance:
+./stage_instance --help
+Usage of ./stage_instance:
   -guild string
     	Test guild ID
   -stage string
@@ -34,6 +35,5 @@ Usage of stage_instance:
 The below example shows how to start the bot from the stage_instance example folder.
 
 ```sh
-./stage_instance -guild YOUR_TESTING_GUILD -stage STAGE_CHANNEL_ID -token YOUR_BOT_TOKEN
-```
+./stage_instance -guild YOUR_TESTING_GUILD_ID -stage YOUR_STAGE_CHANNEL_ID -token YOUR_BOT_TOKEN
 ```

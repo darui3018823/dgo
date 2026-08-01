@@ -20,7 +20,7 @@ var (
 
 func init() {
 
-	flag.StringVar(&Token, "t", "", "Bot Token")
+	flag.StringVar(&Token, "t", "", "Bot token")
 	flag.StringVar(&AvatarFile, "f", "", "Avatar File Name")
 	flag.StringVar(&AvatarURL, "u", "", "URL to the avatar image")
 	flag.Parse()
@@ -34,7 +34,7 @@ func init() {
 func main() {
 
 	// Create a new Discord session using the provided login information.
-	dg, err := dgo.New("Bot " + Token)
+	dg, err := dgo.NewBot(Token)
 	if err != nil {
 		fmt.Println("error creating Discord session,", err)
 		return

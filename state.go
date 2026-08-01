@@ -1,4 +1,4 @@
-// Discordgo - Discord bindings for Go
+// dgo - Discord bindings for Go
 // Available at https://github.com/darui3018823/dgo
 
 // Copyright 2015-2016 Bruce Marriner <bruce@sqls.net>.  All rights reserved.
@@ -14,6 +14,7 @@ package dgo
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 )
@@ -38,16 +39,17 @@ type State struct {
 	Ready
 
 	// MaxMessageCount represents how many messages per channel the state will store.
-	MaxMessageCount    int
-	TrackChannels      bool
-	TrackThreads       bool
-	TrackEmojis        bool
-	TrackStickers      bool
-	TrackMembers       bool
-	TrackThreadMembers bool
-	TrackRoles         bool
-	TrackVoice         bool
-	TrackPresences     bool
+	MaxMessageCount       int
+	TrackChannels         bool
+	TrackThreads          bool
+	TrackEmojis           bool
+	TrackStickers         bool
+	TrackSoundboardSounds bool
+	TrackMembers          bool
+	TrackThreadMembers    bool
+	TrackRoles            bool
+	TrackVoice            bool
+	TrackPresences        bool
 
 	guildMap   map[string]*Guild
 	channelMap map[string]*Channel
@@ -63,20 +65,21 @@ func NewState() *State {
 			PrivateChannels: []*Channel{},
 			Guilds:          []*Guild{},
 		},
-		TrackChannels:      true,
-		TrackThreads:       true,
-		TrackEmojis:        true,
-		TrackStickers:      true,
-		TrackMembers:       true,
-		TrackThreadMembers: true,
-		TrackRoles:         true,
-		TrackVoice:         true,
-		TrackPresences:     true,
-		guildMap:           make(map[string]*Guild),
-		channelMap:         make(map[string]*Channel),
-		memberMap:          make(map[string]map[string]*Member),
-		roleMap:            make(map[string]map[string]*Role),
-		emojiMap:           make(map[string]map[string]*Emoji),
+		TrackChannels:         true,
+		TrackThreads:          true,
+		TrackEmojis:           true,
+		TrackStickers:         true,
+		TrackSoundboardSounds: true,
+		TrackMembers:          true,
+		TrackThreadMembers:    true,
+		TrackRoles:            true,
+		TrackVoice:            true,
+		TrackPresences:        true,
+		guildMap:              make(map[string]*Guild),
+		channelMap:            make(map[string]*Channel),
+		memberMap:             make(map[string]map[string]*Member),
+		roleMap:               make(map[string]map[string]*Role),
+		emojiMap:              make(map[string]map[string]*Emoji),
 	}
 }
 
@@ -173,6 +176,9 @@ func (s *State) GuildAdd(guild *Guild) error {
 		if guild.VoiceStates == nil {
 			guild.VoiceStates = g.VoiceStates
 		}
+		if guild.SoundboardSounds == nil {
+			guild.SoundboardSounds = g.SoundboardSounds
+		}
 		*g = *guild
 		return nil
 	}
@@ -230,6 +236,117 @@ func (s *State) Guild(guildID string) (*Guild, error) {
 	}
 
 	return nil, ErrStateNotFound
+}
+
+// SoundboardSound returns a soundboard sound cached for a guild.
+func (s *State) SoundboardSound(guildID, soundID string) (*SoundboardSound, error) {
+	if s == nil {
+		return nil, ErrNilState
+	}
+
+	s.RLock()
+	defer s.RUnlock()
+
+	guild, ok := s.guildMap[guildID]
+	if !ok {
+		return nil, ErrStateNotFound
+	}
+	for _, sound := range guild.SoundboardSounds {
+		if sound != nil && sound.SoundID == soundID {
+			return sound, nil
+		}
+	}
+	return nil, ErrStateNotFound
+}
+
+// SoundboardSoundAdd adds or updates a soundboard sound in the guild cache.
+func (s *State) SoundboardSoundAdd(guildID string, sound *SoundboardSound) error {
+	if s == nil {
+		return ErrNilState
+	}
+	if sound == nil {
+		return errors.New("soundboard sound cannot be nil")
+	}
+	if sound.SoundID == "" {
+		return errors.New("soundboard sound ID cannot be empty")
+	}
+	if sound.GuildID != "" && sound.GuildID != guildID {
+		return fmt.Errorf("soundboard sound guild ID %q does not match %q", sound.GuildID, guildID)
+	}
+
+	s.Lock()
+	defer s.Unlock()
+
+	guild, ok := s.guildMap[guildID]
+	if !ok {
+		return ErrStateNotFound
+	}
+	if sound.GuildID == "" {
+		sound.GuildID = guildID
+	}
+	for _, cached := range guild.SoundboardSounds {
+		if cached != nil && cached.SoundID == sound.SoundID {
+			*cached = *sound
+			return nil
+		}
+	}
+	guild.SoundboardSounds = append(guild.SoundboardSounds, sound)
+	return nil
+}
+
+// SoundboardSoundRemove removes a soundboard sound from the guild cache.
+func (s *State) SoundboardSoundRemove(guildID, soundID string) error {
+	if s == nil {
+		return ErrNilState
+	}
+
+	s.Lock()
+	defer s.Unlock()
+
+	guild, ok := s.guildMap[guildID]
+	if !ok {
+		return ErrStateNotFound
+	}
+	for index, sound := range guild.SoundboardSounds {
+		if sound != nil && sound.SoundID == soundID {
+			guild.SoundboardSounds = append(guild.SoundboardSounds[:index], guild.SoundboardSounds[index+1:]...)
+			return nil
+		}
+	}
+	return ErrStateNotFound
+}
+
+// SoundboardSoundsUpdate replaces the soundboard sounds cached for a guild.
+func (s *State) SoundboardSoundsUpdate(guildID string, sounds []*SoundboardSound) error {
+	if s == nil {
+		return ErrNilState
+	}
+
+	s.Lock()
+	defer s.Unlock()
+
+	guild, ok := s.guildMap[guildID]
+	if !ok {
+		return ErrStateNotFound
+	}
+	for _, sound := range sounds {
+		if sound == nil {
+			return errors.New("soundboard sounds cannot contain nil")
+		}
+		if sound.SoundID == "" {
+			return errors.New("soundboard sound ID cannot be empty")
+		}
+		if sound.GuildID != "" && sound.GuildID != guildID {
+			return fmt.Errorf("soundboard sound guild ID %q does not match %q", sound.GuildID, guildID)
+		}
+	}
+	for _, sound := range sounds {
+		if sound.GuildID == "" {
+			sound.GuildID = guildID
+		}
+	}
+	guild.SoundboardSounds = sounds
+	return nil
 }
 
 func (s *State) presenceAdd(guildID string, presence *Presence) error {
@@ -1124,6 +1241,26 @@ func (s *State) OnInterface(se *Session, i interface{}) (err error) {
 			s.Lock()
 			defer s.Unlock()
 			guild.Stickers = t.Stickers
+		}
+	case *GuildSoundboardSoundCreate:
+		if s.TrackSoundboardSounds {
+			err = s.SoundboardSoundAdd(t.GuildID, t.SoundboardSound)
+		}
+	case *GuildSoundboardSoundUpdate:
+		if s.TrackSoundboardSounds {
+			err = s.SoundboardSoundAdd(t.GuildID, t.SoundboardSound)
+		}
+	case *GuildSoundboardSoundDelete:
+		if s.TrackSoundboardSounds {
+			err = s.SoundboardSoundRemove(t.GuildID, t.SoundID)
+		}
+	case *GuildSoundboardSoundsUpdate:
+		if s.TrackSoundboardSounds {
+			err = s.SoundboardSoundsUpdate(t.GuildID, t.SoundboardSounds)
+		}
+	case *SoundboardSounds:
+		if s.TrackSoundboardSounds {
+			err = s.SoundboardSoundsUpdate(t.GuildID, t.SoundboardSounds)
 		}
 	case *ChannelCreate:
 		if s.TrackChannels {

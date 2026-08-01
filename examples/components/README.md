@@ -1,18 +1,18 @@
-<img align="right" alt="DiscordGo logo" src="/docs/img/discordgo.svg" width="200">
+<img align="right" alt="dgo project mark" src="../../docs/img/dgo.svg" width="200">
 
-## DiscordGo Components Example
+## dgo components example
 
-This example demonstrates how to utilize DiscordGo to create and use message
+This example demonstrates how to use dgo to create and use message
 components, such as buttons and select menus. For usage of the text input
 component and modals, please refer to the `modals` example.
 
-**Join [Discord Gophers](https://discord.gg/0f1SbxBZjYoCtNPP)
-Discord chat channel for support.**
+For dgo-specific problems, use [GitHub Issues](https://github.com/darui3018823/dgo/issues).
+For general Go discussion, visit [Discord Gophers](https://discord.gg/golang).
 
 ### Build
 
 This assumes you already have a working Go environment setup and that
-DiscordGo is correctly installed on your system.
+Go 1.26.5 or newer and the module dependencies are available.
 
 From within the components example folder, run the below command to compile the
 example.
@@ -24,17 +24,18 @@ go build
 ### Usage
 
 ```
-Usage of components:
+./components --help
+Usage of ./components:
   -app string
     	Application ID
   -guild string
     	Test guild ID
   -token string
-    	Bot access token
+        Bot token
 ```
 
 The below example shows how to start the bot from the components example folder.
 
 ```sh
-./components -app YOUR_APPLICATION_ID -guild YOUR_TESTING_GUILD -token YOUR_BOT_TOKEN
+./components -app YOUR_APPLICATION_ID -guild YOUR_TESTING_GUILD_ID -token YOUR_BOT_TOKEN
 ```

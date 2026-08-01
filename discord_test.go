@@ -1,9 +1,11 @@
 package dgo
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,8 +14,8 @@ import (
 // ////////////////////////////////////////////////////////////////////////////
 // //////////////////////////////////////////////////// VARS NEEDED FOR TESTING
 var (
-	dg    *Session // Stores a global discordgo user session
-	dgBot *Session // Stores a global discordgo bot session
+	dg    *Session // Stores a global dgo user session
+	dgBot *Session // Stores a global dgo bot session
 
 	envOAuth2Token  = os.Getenv("DG_OAUTH2_TOKEN")  // Token to use when authenticating using OAuth2 token
 	envBotToken     = os.Getenv("DGB_TOKEN")        // Token to use when authenticating the bot account
@@ -26,7 +28,7 @@ var (
 func TestMain(m *testing.M) {
 	fmt.Println("Init is being called.")
 	if envBotToken != "" {
-		if d, err := New(envBotToken); err == nil {
+		if d, err := NewBot(envBotToken); err == nil {
 			dgBot = d
 		}
 	}
@@ -36,7 +38,7 @@ func TestMain(m *testing.M) {
 	}
 
 	if envOAuth2Token != "" {
-		if d, err := New(envOAuth2Token); err == nil {
+		if d, err := NewOAuth2(envOAuth2Token); err == nil {
 			dg = d
 		}
 	}
@@ -54,7 +56,7 @@ func TestNewToken(t *testing.T) {
 		t.Skip("Skipping New(token), DGU_TOKEN not set")
 	}
 
-	d, err := New(envOAuth2Token)
+	d, err := NewOAuth2(envOAuth2Token)
 	if err != nil {
 		t.Fatalf("New(envToken) returned error: %+v", err)
 	}
@@ -68,12 +70,90 @@ func TestNewToken(t *testing.T) {
 	}
 }
 
+func TestNewUsesMinimalIntents(t *testing.T) {
+	d, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Identify.Intents != IntentsNone {
+		t.Fatalf("default intents = %d, want IntentsNone", d.Identify.Intents)
+	}
+}
+
+func TestNewRejectsRawOrMalformedCredentials(t *testing.T) {
+	for _, token := range []string{
+		"raw-user-token",
+		"Bot ",
+		"Bot token with spaces",
+		"Bearer ",
+		"Bearer token\n",
+		" bot-token",
+	} {
+		t.Run(token, func(t *testing.T) {
+			session, err := New(token)
+			if !errors.Is(err, ErrInvalidSessionToken) {
+				t.Fatalf("New(%q) error = %v, want %v", token, err, ErrInvalidSessionToken)
+			}
+			if session != nil {
+				t.Fatalf("New(%q) session = %#v, want nil", token, session)
+			}
+		})
+	}
+}
+
+func TestCredentialConstructors(t *testing.T) {
+	tests := []struct {
+		name string
+		new  func(string) (*Session, error)
+		raw  string
+		want string
+	}{
+		{name: "bot", new: NewBot, raw: "bot-token", want: "Bot bot-token"},
+		{name: "oauth2", new: NewOAuth2, raw: "oauth-token", want: "Bearer oauth-token"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			session, err := test.new(test.raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if session.Token != test.want || session.Identify.Token != test.want {
+				t.Fatalf(
+					"tokens = (%q, %q), want %q",
+					session.Token,
+					session.Identify.Token,
+					test.want,
+				)
+			}
+		})
+	}
+
+	for _, constructor := range []func(string) (*Session, error){NewBot, NewOAuth2} {
+		for _, token := range []string{"", " prefixed", "Bot token", "token\n"} {
+			if session, err := constructor(token); !errors.Is(err, ErrInvalidSessionToken) || session != nil {
+				t.Fatalf("constructor(%q) = (%#v, %v), want (nil, %v)", token, session, err, ErrInvalidSessionToken)
+			}
+		}
+	}
+}
+
+func TestIntentAggregatesIncludePolls(t *testing.T) {
+	polls := IntentGuildMessagePolls | IntentDirectMessagePolls
+	if IntentsAllWithoutPrivileged&polls != polls {
+		t.Fatal("IntentsAllWithoutPrivileged does not include poll intents")
+	}
+	if IntentsAll&polls != polls {
+		t.Fatal("IntentsAll does not include poll intents")
+	}
+}
+
 func TestOpenClose(t *testing.T) {
 	if envOAuth2Token == "" {
 		t.Skip("Skipping TestClose, DGU_TOKEN not set")
 	}
 
-	d, err := New(envOAuth2Token)
+	d, err := NewOAuth2(envOAuth2Token)
 	if err != nil {
 		t.Fatalf("TestClose, New(envToken) returned error: %+v", err)
 	}
@@ -182,6 +262,77 @@ func TestRemoveHandler(t *testing.T) {
 	// testHandler will be called once, as it was removed in between calls.
 	if atomic.LoadInt32(&testHandlerCalled) != 1 {
 		t.Fatalf("testHandler was not called once.")
+	}
+}
+
+func TestSyncHandlerCanModifyHandlers(t *testing.T) {
+	d := &Session{SyncEvents: true}
+	done := make(chan struct{})
+
+	var remove func()
+	remove = d.AddHandler(func(s *Session, _ *MessageCreate) {
+		s.AddHandler(func(*Session, *MessageCreate) {})
+		remove()
+		close(done)
+	})
+
+	go d.handleEvent(messageCreateEventType, &MessageCreate{})
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("synchronous handler deadlocked while modifying handlers")
+	}
+}
+
+func TestOnceHandlerConsumedAtomically(t *testing.T) {
+	d := &Session{SyncEvents: true}
+	var called atomic.Int32
+	d.AddHandlerOnce(func(*Session, *MessageCreate) {
+		called.Add(1)
+	})
+
+	var events sync.WaitGroup
+	for range 32 {
+		events.Add(1)
+		go func() {
+			defer events.Done()
+			d.handleEvent(messageCreateEventType, &MessageCreate{})
+		}()
+	}
+	events.Wait()
+
+	if got := called.Load(); got != 1 {
+		t.Fatalf("once handler called %d times, want 1", got)
+	}
+}
+
+func TestHandlerPanicIsRecovered(t *testing.T) {
+	d := &Session{SyncEvents: true}
+	panicReported := false
+	secondHandlerCalled := false
+	d.PanicHandler = func(_ *Session, event interface{}, recovered interface{}) {
+		if _, ok := event.(*MessageCreate); !ok {
+			t.Errorf("panic event = %T, want *MessageCreate", event)
+		}
+		if recovered != "handler panic" {
+			t.Errorf("recovered = %v, want handler panic", recovered)
+		}
+		panicReported = true
+	}
+	d.AddHandler(func(*Session, *MessageCreate) {
+		panic("handler panic")
+	})
+	d.AddHandler(func(*Session, *MessageCreate) {
+		secondHandlerCalled = true
+	})
+
+	d.handleEvent(messageCreateEventType, &MessageCreate{})
+
+	if !panicReported {
+		t.Error("panic handler was not called")
+	}
+	if !secondHandlerCalled {
+		t.Error("dispatch stopped after a handler panic")
 	}
 }
 

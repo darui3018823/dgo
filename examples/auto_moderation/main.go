@@ -13,7 +13,7 @@ import (
 
 // Command line flags
 var (
-	BotToken  = flag.String("token", "", "Bot authorization token")
+	BotToken  = flag.String("token", "", "Bot token")
 	GuildID   = flag.String("guild", "", "ID of the testing guild")
 	ChannelID = flag.String("channel", "", "ID of the testing channel")
 )
@@ -21,7 +21,7 @@ var (
 func init() { flag.Parse() }
 
 func main() {
-	session, _ := dgo.New("Bot " + *BotToken)
+	session, _ := dgo.NewBot(*BotToken)
 	session.Identify.Intents |= dgo.IntentAutoModerationExecution
 	session.Identify.Intents |= dgo.IntentMessageContent
 

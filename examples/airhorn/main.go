@@ -15,7 +15,7 @@ import (
 )
 
 func init() {
-	flag.StringVar(&token, "t", "", "Bot Token")
+	flag.StringVar(&token, "t", "", "Bot token")
 	flag.Parse()
 }
 
@@ -33,12 +33,12 @@ func main() {
 	err := loadSound()
 	if err != nil {
 		fmt.Println("Error loading sound: ", err)
-		fmt.Println("Please copy $GOPATH/src/github.com/bwmarrin/examples/airhorn/airhorn.dca to this directory.")
+		fmt.Println("Please copy an airhorn.dca file into this directory.")
 		return
 	}
 
 	// Create a new Discord session using the provided bot token.
-	dg, err := dgo.New("Bot " + token)
+	dg, err := dgo.NewBot(token)
 	if err != nil {
 		fmt.Println("Error creating Discord session: ", err)
 		return

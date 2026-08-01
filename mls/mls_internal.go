@@ -219,10 +219,11 @@ func generateSignatureKeyPair() (*signatureKeyPair, error) {
 	if err != nil {
 		return nil, fmt.Errorf("generating ECDSA key: %w", err)
 	}
-	pub := make([]byte, 1, 65)
-	pub[0] = 4
-	pub = append(pub, priv.PublicKey.X.FillBytes(make([]byte, 32))...)
-	pub = append(pub, priv.PublicKey.Y.FillBytes(make([]byte, 32))...)
+	ecdhPublicKey, err := priv.PublicKey.ECDH()
+	if err != nil {
+		return nil, fmt.Errorf("converting ECDSA public key: %w", err)
+	}
+	pub := ecdhPublicKey.Bytes()
 	return &signatureKeyPair{pub: pub, priv: priv}, nil
 }
 

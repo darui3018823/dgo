@@ -24,7 +24,7 @@ var games map[string]time.Time = make(map[string]time.Time)
 func init() { flag.Parse() }
 
 func main() {
-	s, _ := dgo.New("Bot " + *BotToken)
+	s, _ := dgo.NewBot(*BotToken)
 	s.AddHandler(func(s *dgo.Session, r *dgo.Ready) {
 		fmt.Println("Bot is ready")
 	})

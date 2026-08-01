@@ -1,81 +1,96 @@
-# Getting Started
+# Getting started
 
-This page is dedicated to helping you get started on your way to making the
-next great Discord bot or client with DiscordGo. Once you've done that please
-don't forget to submit it to the 
-[Awesome DiscordGo](https://github.com/darui3018823/discordgo/wiki/Awesome-DiscordGo) list :).
+This guide creates a minimal dgo bot session using the public Discord Bot API.
 
+## Requirements
 
-**First, lets cover a few topics so you can make the best choices on how to 
-move forward from here.**
+- Go 1.26.5 or newer
+- A Discord application with a bot user
+- A bot token stored outside source control
 
-#### Bot Application
-A bot application is a special program that interacts with the Discord servers
-to perform some form of automation or provide some type of service.  Examples 
-are things like number trivia games, music streaming, channel moderation, 
-sending reminders, playing loud airhorn sounds, comic generators, YouTube 
-integration, Twitch integration... You're *almost* only limited by your imagination.
+Create applications in the
+[Discord Developer Portal](https://discord.com/developers/applications).
+Automated user accounts, raw user tokens, and private Discord client routes
+are not supported.
 
-Bot applications require the use of a special Bot account.  These accounts are
-tied to your personal user account. Bot accounts cannot login with the normal
-user clients and they cannot join servers the same way a user does. They do not 
-have access to some user client specific features however they gain access to
-many Bot specific features.
+## Install
 
-To create a new bot account first create yourself a normal user account on 
-Discord then visit the [My Applications](https://discord.com/developers/applications/me)
-page and click on the **New Application** box.  Follow the prompts from there
-to finish creating your account.
-
-
-**More information about Bot vs Client accounts can be found [here](https://discord.com/developers/docs/topics/oauth2#bot-vs-user-accounts).**
-
-# Requirements
-
-DiscordGo requires Go version 1.4 or higher.  It has been tested to compile and
-run successfully on Debian Linux 8, FreeBSD 10, and Windows 7.  It is expected 
-that it should work anywhere Go 1.4 or higher works. If you run into problems
-please let us know :).
-
-You must already have a working Go environment setup to use DiscordGo.  If you 
-are new to Go and have not yet installed and tested it on your computer then 
-please visit [this page](https://golang.org/doc/install) first then I highly
-recommend you walk though [A Tour of Go](https://tour.golang.org/welcome/1) to
-help get your familiar with the Go language.  Also checkout the relevant Go plugin 
-for your editor &mdash; they are hugely helpful when developing Go code.
-
-* Vim &mdash; [vim-go](https://github.com/fatih/vim-go)
-* Sublime &mdash; [GoSublime](https://github.com/DisposaBoy/GoSublime)
-* Atom &mdash; [go-plus](https://atom.io/packages/go-plus)
-* Visual Studio &mdash; [vscode-go](https://github.com/Microsoft/vscode-go)
-
-
-# Install DiscordGo
-
-Like any other Go package the fist step is to `go get` the package.  This will
-always pull the latest tagged release from the master branch. Then run 
-`go install` to compile and install the libraries on your system.
-
-#### Linux/BSD
-
-Run go get to download the package to your GOPATH/src folder.
+Create or open a Go module, then add dgo:
 
 ```sh
-go get github.com/darui3018823/discordgo
+go mod init example.com/my-bot
+go get github.com/darui3018823/dgo@latest
 ```
 
-Finally, compile and install the package into the GOPATH/pkg folder. This isn't
-absolutely required but doing this will allow the Go plugin for your editor to
-provide autocomplete for all DiscordGo functions.
+There is no need to copy the repository into `GOPATH` or run `go install` for
+the library.
+
+## Minimal session
+
+```go
+package main
+
+import (
+	"log"
+	"os"
+	"os/signal"
+
+	"github.com/darui3018823/dgo"
+)
+
+func main() {
+	token := os.Getenv("DISCORD_BOT_TOKEN")
+	if token == "" {
+		log.Fatal("DISCORD_BOT_TOKEN is required")
+	}
+
+	session, err := dgo.NewBot(token)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer session.Close()
+
+	// dgo starts with no Gateway intents. Request only what the bot needs.
+	session.Identify.Intents = dgo.IntentsGuilds
+	session.AddHandler(func(_ *dgo.Session, ready *dgo.Ready) {
+		log.Printf("connected as %s", ready.User.Username)
+	})
+
+	if err := session.Open(); err != nil {
+		log.Fatal(err)
+	}
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt)
+	<-stop
+}
+```
+
+Run it with the token in the environment:
 
 ```sh
-cd $GOPATH/src/github.com/darui3018823/discordgo
-go install
+go run .
 ```
 
-#### Windows
-Placeholder.
+## Safe defaults
 
+- `New`, `NewBot`, and `NewOAuth2` default to `IntentsNone`. Add only the
+  intents required by the bot before opening a Gateway connection.
+- Messages default to an empty `allowed_mentions.parse` list. Opt in to
+  mentions explicitly when needed.
+- `NewBot` accepts a raw bot token and adds the required `Bot ` prefix. If you
+  use the generic `New` constructor, pass the full `Bot <token>` credential.
+- Interaction and webhook tokens may appear in request URLs; dgo redacts them
+  from its diagnostic metadata and logs.
 
-# Next...
-More coming soon.
+Privileged intents must also be enabled for the application in the Developer
+Portal. See Discord's
+[Gateway intents documentation](https://docs.discord.com/developers/events/gateway#gateway-intents).
+
+## Next steps
+
+- Browse the [examples on GitHub](https://github.com/darui3018823/dgo/tree/master/examples).
+- Review the [migration and compatibility guide](Migration.md).
+- Check the [public API inventory](API.md).
+- Use the [package reference](https://pkg.go.dev/github.com/darui3018823/dgo)
+  for exported types and methods.

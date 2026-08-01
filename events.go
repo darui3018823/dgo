@@ -2,6 +2,7 @@ package dgo
 
 import (
 	"encoding/json"
+	"time"
 )
 
 // This file contains all the possible structs that can be
@@ -17,11 +18,30 @@ type Connect struct{}
 // This is a synthetic event and is not dispatched by Discord.
 type Disconnect struct{}
 
+// GatewayClose is emitted when a Gateway read fails. Code and Reason are set
+// for WebSocket close frames. Err retains the transport error for diagnostics.
+// This is a synthetic event and is not dispatched by Discord.
+type GatewayClose struct {
+	Code     int
+	Reason   string
+	Recovery GatewayCloseRecovery
+	Err      error
+}
+
 // RateLimit is the data for a RateLimit event.
 // This is a synthetic event and is not dispatched by Discord.
 type RateLimit struct {
 	*TooManyRequests
 	URL string
+
+	Scope      RateLimitScope
+	Limit      int
+	Remaining  int
+	ResetAfter time.Duration
+
+	InvalidRequestCount   int
+	InvalidRequestLimit   int
+	InvalidRequestWarning bool
 }
 
 // Event provides a basic initial struct for all websocket events.
@@ -36,13 +56,14 @@ type Event struct {
 
 // A Ready stores all data for the websocket READY event.
 type Ready struct {
-	Version         int          `json:"v"`
-	SessionID       string       `json:"session_id"`
-	User            *User        `json:"user"`
-	Shard           *[2]int      `json:"shard"`
-	Application     *Application `json:"application"`
-	Guilds          []*Guild     `json:"guilds"`
-	PrivateChannels []*Channel   `json:"private_channels"`
+	Version          int          `json:"v"`
+	SessionID        string       `json:"session_id"`
+	ResumeGatewayURL string       `json:"resume_gateway_url"`
+	User             *User        `json:"user"`
+	Shard            *[2]int      `json:"shard"`
+	Application      *Application `json:"application"`
+	Guilds           []*Guild     `json:"guilds"`
+	PrivateChannels  []*Channel   `json:"private_channels"`
 }
 
 // ChannelCreate is the data for a ChannelCreate event.
@@ -66,6 +87,13 @@ type ChannelPinsUpdate struct {
 	LastPinTimestamp string `json:"last_pin_timestamp"`
 	ChannelID        string `json:"channel_id"`
 	GuildID          string `json:"guild_id,omitempty"`
+}
+
+// ChannelInfo contains ephemeral information for channels in a guild. It is
+// sent in response to a Request Channel Info gateway command.
+type ChannelInfo struct {
+	GuildID  string               `json:"guild_id"`
+	Channels []ChannelInfoChannel `json:"channels"`
 }
 
 // ThreadCreate is the data for a ThreadCreate event.
@@ -187,6 +215,38 @@ type GuildStickersUpdate struct {
 	Stickers []*Sticker `json:"stickers"`
 }
 
+// GuildSoundboardSoundCreate is the data for a Guild Soundboard Sound Create
+// event.
+type GuildSoundboardSoundCreate struct {
+	*SoundboardSound
+}
+
+// GuildSoundboardSoundUpdate is the data for a Guild Soundboard Sound Update
+// event.
+type GuildSoundboardSoundUpdate struct {
+	*SoundboardSound
+}
+
+// GuildSoundboardSoundDelete is the data for a Guild Soundboard Sound Delete
+// event.
+type GuildSoundboardSoundDelete struct {
+	SoundID string `json:"sound_id"`
+	GuildID string `json:"guild_id"`
+}
+
+// GuildSoundboardSoundsUpdate is the data for a Guild Soundboard Sounds Update
+// event.
+type GuildSoundboardSoundsUpdate struct {
+	SoundboardSounds []*SoundboardSound `json:"soundboard_sounds"`
+	GuildID          string             `json:"guild_id"`
+}
+
+// SoundboardSounds is the response to a Request Soundboard Sounds operation.
+type SoundboardSounds struct {
+	SoundboardSounds []*SoundboardSound `json:"soundboard_sounds"`
+	GuildID          string             `json:"guild_id"`
+}
+
 // A GuildMembersChunk is the data for a GuildMembersChunk event.
 type GuildMembersChunk struct {
 	GuildID    string      `json:"guild_id"`
@@ -196,6 +256,14 @@ type GuildMembersChunk struct {
 	NotFound   []string    `json:"not_found,omitempty"`
 	Presences  []*Presence `json:"presences,omitempty"`
 	Nonce      string      `json:"nonce,omitempty"`
+}
+
+// GatewayRateLimited is dispatched when Discord rate limits a Gateway send
+// operation. This is distinct from the synthetic REST RateLimit event.
+type GatewayRateLimited struct {
+	Opcode     int                      `json:"opcode"`
+	RetryAfter float64                  `json:"retry_after"`
+	Meta       GatewayRateLimitMetadata `json:"meta"`
 }
 
 // GuildIntegrationsUpdate is the data for a GuildIntegrationsUpdate event.
@@ -315,6 +383,16 @@ type MessageReactionRemoveAll struct {
 	*MessageReaction
 }
 
+// MessageReactionRemoveEmoji is the data for a Message Reaction Remove Emoji
+// event. It is dispatched when every reaction for one emoji is removed from a
+// message.
+type MessageReactionRemoveEmoji struct {
+	ChannelID string `json:"channel_id"`
+	MessageID string `json:"message_id"`
+	GuildID   string `json:"guild_id,omitempty"`
+	Emoji     Emoji  `json:"emoji"`
+}
+
 // PresencesReplace is the data for a PresencesReplace event.
 type PresencesReplace []*Presence
 
@@ -360,7 +438,7 @@ type VoiceStateUpdate struct {
 type VoiceChannelStartTimeUpdate struct {
 	ID             string `json:"id"`
 	GuildID        string `json:"guild_id"`
-	VoiceStartTime int64  `json:"voice_start_time"`
+	VoiceStartTime *int64 `json:"voice_start_time"`
 }
 
 // VoiceChannelStatusUpdate is the data for a VoiceChannelStatusUpdate event.
@@ -368,6 +446,18 @@ type VoiceChannelStatusUpdate struct {
 	ID      string  `json:"id"`
 	GuildID string  `json:"guild_id"`
 	Status  *string `json:"status"`
+}
+
+// VoiceChannelEffectSend is the data for a Voice Channel Effect Send event.
+type VoiceChannelEffectSend struct {
+	ChannelID     string                           `json:"channel_id"`
+	GuildID       string                           `json:"guild_id"`
+	UserID        string                           `json:"user_id"`
+	Emoji         *Emoji                           `json:"emoji,omitempty"`
+	AnimationType *VoiceChannelEffectAnimationType `json:"animation_type,omitempty"`
+	AnimationID   *int64                           `json:"animation_id,omitempty"`
+	SoundID       *SoundboardSoundID               `json:"sound_id,omitempty"`
+	SoundVolume   *float64                         `json:"sound_volume,omitempty"`
 }
 
 // MessageDeleteBulk is the data for a MessageDeleteBulk event

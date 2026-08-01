@@ -98,13 +98,20 @@ func main() {
 
 var constRegexp = regexp.MustCompile("([a-z])([A-Z])")
 
+var eventNameOverrides = map[string]string{
+	"GatewayRateLimited":       "RATE_LIMITED",
+	"StageInstanceEventCreate": "STAGE_INSTANCE_CREATE",
+	"StageInstanceEventDelete": "STAGE_INSTANCE_DELETE",
+	"StageInstanceEventUpdate": "STAGE_INSTANCE_UPDATE",
+}
+
 func constCase(name string) string {
 	return strings.ToUpper(constRegexp.ReplaceAllString(name, "${1}_${2}"))
 }
 
 func isDiscordEvent(name string) bool {
 	switch {
-	case name == "Connect", name == "Disconnect", name == "Event", name == "RateLimit", name == "Interface":
+	case name == "Connect", name == "Disconnect", name == "Event", name == "GatewayClose", name == "RateLimit", name == "Interface":
 		return false
 	default:
 		return true
@@ -114,6 +121,9 @@ func isDiscordEvent(name string) bool {
 func constName(name string) string {
 	if !isDiscordEvent(name) {
 		return "__" + constCase(name) + "__"
+	}
+	if eventName, ok := eventNameOverrides[name]; ok {
+		return eventName
 	}
 
 	return constCase(name)

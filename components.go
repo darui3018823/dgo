@@ -2,7 +2,10 @@ package dgo
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"reflect"
+	"unicode/utf8"
 )
 
 // ComponentType is type of component.
@@ -25,6 +28,11 @@ const (
 	FileComponentType              ComponentType = 13
 	SeparatorComponent             ComponentType = 14
 	ContainerComponent             ComponentType = 17
+	LabelComponent                 ComponentType = 18
+	FileUploadComponent            ComponentType = 19
+	RadioGroupComponent            ComponentType = 21
+	CheckboxGroupComponent         ComponentType = 22
+	CheckboxComponent              ComponentType = 23
 )
 
 // MessageComponent is a base interface for all message components.
@@ -71,8 +79,18 @@ func (umc *unmarshalableMessageComponent) UnmarshalJSON(src []byte) error {
 		umc.MessageComponent = &Separator{}
 	case ContainerComponent:
 		umc.MessageComponent = &Container{}
+	case LabelComponent:
+		umc.MessageComponent = &Label{}
+	case FileUploadComponent:
+		umc.MessageComponent = &FileUpload{}
+	case RadioGroupComponent:
+		umc.MessageComponent = &RadioGroup{}
+	case CheckboxGroupComponent:
+		umc.MessageComponent = &CheckboxGroup{}
+	case CheckboxComponent:
+		umc.MessageComponent = &Checkbox{}
 	default:
-		return fmt.Errorf("unknown component type: %d", v.Type)
+		umc.MessageComponent = &UnknownComponent{}
 	}
 	return json.Unmarshal(src, umc.MessageComponent)
 }
@@ -85,6 +103,42 @@ func MessageComponentFromJSON(b []byte) (MessageComponent, error) {
 		return nil, fmt.Errorf("failed to unmarshal into MessageComponent: %w", err)
 	}
 	return u.MessageComponent, nil
+}
+
+// UnknownComponent preserves a component whose type is not yet known by this
+// version of dgo. This allows interaction payloads to remain decodable when
+// Discord introduces a new component type.
+type UnknownComponent struct {
+	ComponentType ComponentType   `json:"-"`
+	Raw           json.RawMessage `json:"-"`
+}
+
+// Type returns the component type found in the original payload.
+func (c UnknownComponent) Type() ComponentType {
+	return c.ComponentType
+}
+
+// UnmarshalJSON preserves the complete unknown component payload.
+func (c *UnknownComponent) UnmarshalJSON(data []byte) error {
+	var header struct {
+		Type ComponentType `json:"type"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return err
+	}
+	c.ComponentType = header.Type
+	c.Raw = append(c.Raw[:0], data...)
+	return nil
+}
+
+// MarshalJSON writes the original unknown component payload unchanged.
+func (c UnknownComponent) MarshalJSON() ([]byte, error) {
+	if len(c.Raw) == 0 {
+		return json.Marshal(struct {
+			Type ComponentType `json:"type"`
+		}{Type: c.ComponentType})
+	}
+	return append([]byte(nil), c.Raw...), nil
 }
 
 // ActionsRow is a top-level container component for displaying a row of interactive components.
@@ -258,12 +312,16 @@ type SelectMenu struct {
 
 	Options  []SelectMenuOption `json:"options,omitempty"`
 	Disabled bool               `json:"disabled"`
+	Required *bool              `json:"required,omitempty"`
 
 	// NOTE: Can only be used in SelectMenu with Channel menu type.
 	ChannelTypes []ChannelType `json:"channel_types,omitempty"`
 
 	// Unique identifier for the component; auto populated through increment if not provided.
 	ID int `json:"id,omitempty"`
+
+	// Values is populated only when receiving a modal submit interaction.
+	Values []string `json:"values,omitempty"`
 }
 
 // Type is a method to get the type of a component.
@@ -578,6 +636,186 @@ func (c Container) MarshalJSON() ([]byte, error) {
 	})
 }
 
+// Label is a top-level modal layout component that associates text with one
+// interactive child component.
+type Label struct {
+	ID          int              `json:"id,omitempty"`
+	Label       string           `json:"label"`
+	Description string           `json:"description,omitempty"`
+	Component   MessageComponent `json:"component"`
+}
+
+// NewLabel creates a Label containing a modal component.
+func NewLabel(label string, component MessageComponent) *Label {
+	return &Label{Label: label, Component: component}
+}
+
+// Type returns the component type.
+func (Label) Type() ComponentType {
+	return LabelComponent
+}
+
+// UnmarshalJSON decodes the nested label component.
+func (l *Label) UnmarshalJSON(data []byte) error {
+	type label Label
+	var v struct {
+		label
+		RawComponent unmarshalableMessageComponent `json:"component"`
+	}
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	*l = Label(v.label)
+	l.Component = v.RawComponent.MessageComponent
+	return nil
+}
+
+// MarshalJSON is a method for marshaling Label to a JSON object.
+func (l Label) MarshalJSON() ([]byte, error) {
+	type label Label
+	return Marshal(struct {
+		label
+		Type ComponentType `json:"type"`
+	}{
+		label: label(l),
+		Type:  l.Type(),
+	})
+}
+
+// FileUpload is an interactive modal component for uploading files.
+type FileUpload struct {
+	ID        int      `json:"id,omitempty"`
+	CustomID  string   `json:"custom_id,omitempty"`
+	MinValues *int     `json:"min_values,omitempty"`
+	MaxValues int      `json:"max_values,omitempty"`
+	Required  *bool    `json:"required,omitempty"`
+	Values    []string `json:"values,omitempty"`
+}
+
+// NewFileUpload creates a FileUpload with the given custom ID.
+func NewFileUpload(customID string) *FileUpload {
+	return &FileUpload{CustomID: customID}
+}
+
+// Type returns the component type.
+func (FileUpload) Type() ComponentType {
+	return FileUploadComponent
+}
+
+// MarshalJSON is a method for marshaling FileUpload to a JSON object.
+func (f FileUpload) MarshalJSON() ([]byte, error) {
+	type fileUpload FileUpload
+	return Marshal(struct {
+		fileUpload
+		Type ComponentType `json:"type"`
+	}{
+		fileUpload: fileUpload(f),
+		Type:       f.Type(),
+	})
+}
+
+// ModalChoiceOption is an option in a RadioGroup or CheckboxGroup.
+type ModalChoiceOption struct {
+	Value       string `json:"value"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+	Default     bool   `json:"default,omitempty"`
+}
+
+// RadioGroup is an interactive modal component for choosing exactly one option.
+type RadioGroup struct {
+	ID       int                 `json:"id,omitempty"`
+	CustomID string              `json:"custom_id,omitempty"`
+	Options  []ModalChoiceOption `json:"options,omitempty"`
+	Required *bool               `json:"required,omitempty"`
+	Value    *string             `json:"value,omitempty"`
+}
+
+// NewRadioGroup creates a RadioGroup with the given custom ID and options.
+func NewRadioGroup(customID string, options ...ModalChoiceOption) *RadioGroup {
+	return &RadioGroup{CustomID: customID, Options: options}
+}
+
+// Type returns the component type.
+func (RadioGroup) Type() ComponentType {
+	return RadioGroupComponent
+}
+
+// MarshalJSON is a method for marshaling RadioGroup to a JSON object.
+func (r RadioGroup) MarshalJSON() ([]byte, error) {
+	type radioGroup RadioGroup
+	return Marshal(struct {
+		radioGroup
+		Type ComponentType `json:"type"`
+	}{
+		radioGroup: radioGroup(r),
+		Type:       r.Type(),
+	})
+}
+
+// CheckboxGroup is an interactive modal component for choosing one or more options.
+type CheckboxGroup struct {
+	ID        int                 `json:"id,omitempty"`
+	CustomID  string              `json:"custom_id,omitempty"`
+	Options   []ModalChoiceOption `json:"options,omitempty"`
+	MinValues *int                `json:"min_values,omitempty"`
+	MaxValues int                 `json:"max_values,omitempty"`
+	Required  *bool               `json:"required,omitempty"`
+	Values    []string            `json:"values,omitempty"`
+}
+
+// NewCheckboxGroup creates a CheckboxGroup with the given custom ID and options.
+func NewCheckboxGroup(customID string, options ...ModalChoiceOption) *CheckboxGroup {
+	return &CheckboxGroup{CustomID: customID, Options: options}
+}
+
+// Type returns the component type.
+func (CheckboxGroup) Type() ComponentType {
+	return CheckboxGroupComponent
+}
+
+// MarshalJSON is a method for marshaling CheckboxGroup to a JSON object.
+func (c CheckboxGroup) MarshalJSON() ([]byte, error) {
+	type checkboxGroup CheckboxGroup
+	return Marshal(struct {
+		checkboxGroup
+		Type ComponentType `json:"type"`
+	}{
+		checkboxGroup: checkboxGroup(c),
+		Type:          c.Type(),
+	})
+}
+
+// Checkbox is an interactive modal component for a single boolean choice.
+type Checkbox struct {
+	ID       int    `json:"id,omitempty"`
+	CustomID string `json:"custom_id,omitempty"`
+	Default  bool   `json:"default,omitempty"`
+	Value    bool   `json:"value,omitempty"`
+}
+
+// NewCheckbox creates a Checkbox with the given custom ID.
+func NewCheckbox(customID string) *Checkbox {
+	return &Checkbox{CustomID: customID}
+}
+
+// Type returns the component type.
+func (Checkbox) Type() ComponentType {
+	return CheckboxComponent
+}
+
+// MarshalJSON is a method for marshaling Checkbox to a JSON object.
+func (c Checkbox) MarshalJSON() ([]byte, error) {
+	type checkbox Checkbox
+	return Marshal(struct {
+		checkbox
+		Type ComponentType `json:"type"`
+	}{
+		checkbox: checkbox(c),
+		Type:     c.Type(),
+	})
+}
+
 // UnfurledMediaItem represents an unfurled media item.
 type UnfurledMediaItem struct {
 	URL string `json:"url"`
@@ -601,4 +839,332 @@ type ResolvedUnfurledMediaItem struct {
 	Width       int    `json:"width"`
 	Height      int    `json:"height"`
 	ContentType string `json:"content_type"`
+}
+
+// ErrInvalidModal indicates that a modal or one of its components violates
+// Discord's component constraints.
+var ErrInvalidModal = errors.New("invalid modal")
+
+// ValidateModal validates a modal response before it is sent to Discord.
+func ValidateModal(customID, title string, components []MessageComponent) error {
+	if err := validateComponentString("custom_id", customID, 1, 100); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidModal, err)
+	}
+	if err := validateComponentString("title", title, 1, 45); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidModal, err)
+	}
+	if len(components) < 1 || len(components) > 5 {
+		return fmt.Errorf("%w: components must contain between 1 and 5 items", ErrInvalidModal)
+	}
+
+	customIDs := make(map[string]struct{})
+	for i, component := range components {
+		if isNilMessageComponent(component) {
+			return fmt.Errorf("%w: components[%d] must not be nil", ErrInvalidModal, i)
+		}
+		switch component.Type() {
+		case LabelComponent, ActionsRowComponent, TextDisplayComponent:
+		default:
+			return fmt.Errorf("%w: component type %d cannot be used at the top level", ErrInvalidModal, component.Type())
+		}
+		if err := validateModalComponent(component, customIDs); err != nil {
+			return fmt.Errorf("%w: components[%d]: %v", ErrInvalidModal, i, err)
+		}
+	}
+	return nil
+}
+
+func validateModalComponent(component MessageComponent, customIDs map[string]struct{}) error {
+	switch c := component.(type) {
+	case Label:
+		return validateLabel(c, customIDs)
+	case *Label:
+		if c == nil {
+			return errors.New("label must not be nil")
+		}
+		return validateLabel(*c, customIDs)
+	case ActionsRow:
+		return validateModalActionsRow(c, customIDs)
+	case *ActionsRow:
+		if c == nil {
+			return errors.New("action row must not be nil")
+		}
+		return validateModalActionsRow(*c, customIDs)
+	case TextDisplay:
+		return validateComponentString("content", c.Content, 1, 4000)
+	case *TextDisplay:
+		if c == nil {
+			return errors.New("text display must not be nil")
+		}
+		return validateComponentString("content", c.Content, 1, 4000)
+	case TextInput:
+		return validateTextInput(c, customIDs)
+	case *TextInput:
+		if c == nil {
+			return errors.New("text input must not be nil")
+		}
+		return validateTextInput(*c, customIDs)
+	case SelectMenu:
+		return validateModalSelect(c, customIDs)
+	case *SelectMenu:
+		if c == nil {
+			return errors.New("select menu must not be nil")
+		}
+		return validateModalSelect(*c, customIDs)
+	case FileUpload:
+		return validateFileUpload(c, customIDs)
+	case *FileUpload:
+		if c == nil {
+			return errors.New("file upload must not be nil")
+		}
+		return validateFileUpload(*c, customIDs)
+	case RadioGroup:
+		return validateRadioGroup(c, customIDs)
+	case *RadioGroup:
+		if c == nil {
+			return errors.New("radio group must not be nil")
+		}
+		return validateRadioGroup(*c, customIDs)
+	case CheckboxGroup:
+		return validateCheckboxGroup(c, customIDs)
+	case *CheckboxGroup:
+		if c == nil {
+			return errors.New("checkbox group must not be nil")
+		}
+		return validateCheckboxGroup(*c, customIDs)
+	case Checkbox:
+		return validateCustomID(c.CustomID, customIDs)
+	case *Checkbox:
+		if c == nil {
+			return errors.New("checkbox must not be nil")
+		}
+		return validateCustomID(c.CustomID, customIDs)
+	default:
+		return fmt.Errorf("unsupported component implementation %T", component)
+	}
+}
+
+func validateLabel(label Label, customIDs map[string]struct{}) error {
+	if err := validateComponentString("label", label.Label, 1, 45); err != nil {
+		return err
+	}
+	if err := validateComponentString("description", label.Description, 0, 100); err != nil {
+		return err
+	}
+	if isNilMessageComponent(label.Component) {
+		return errors.New("component must not be nil")
+	}
+	switch label.Component.Type() {
+	case SelectMenuComponent, TextInputComponent, UserSelectMenuComponent,
+		RoleSelectMenuComponent, MentionableSelectMenuComponent, ChannelSelectMenuComponent,
+		FileUploadComponent, RadioGroupComponent, CheckboxGroupComponent, CheckboxComponent:
+	default:
+		return fmt.Errorf("component type %d cannot be used in a label", label.Component.Type())
+	}
+	return validateModalComponent(label.Component, customIDs)
+}
+
+func validateModalActionsRow(row ActionsRow, customIDs map[string]struct{}) error {
+	if len(row.Components) != 1 {
+		return errors.New("a modal action row must contain exactly one component")
+	}
+	component := row.Components[0]
+	if isNilMessageComponent(component) {
+		return errors.New("action row component must not be nil")
+	}
+	switch component.Type() {
+	case TextInputComponent, SelectMenuComponent, UserSelectMenuComponent,
+		RoleSelectMenuComponent, MentionableSelectMenuComponent, ChannelSelectMenuComponent:
+	default:
+		return fmt.Errorf("component type %d cannot be used in a modal action row", component.Type())
+	}
+	return validateModalComponent(component, customIDs)
+}
+
+func validateTextInput(input TextInput, customIDs map[string]struct{}) error {
+	if err := validateCustomID(input.CustomID, customIDs); err != nil {
+		return err
+	}
+	if input.Style != TextInputShort && input.Style != TextInputParagraph {
+		return errors.New("style must be TextInputShort or TextInputParagraph")
+	}
+	if input.MinLength < 0 || input.MinLength > 4000 {
+		return errors.New("min_length must be between 0 and 4000")
+	}
+	if input.MaxLength < 0 || input.MaxLength > 4000 {
+		return errors.New("max_length must be between 1 and 4000 when provided")
+	}
+	if input.MaxLength > 0 && input.MinLength > input.MaxLength {
+		return errors.New("min_length must not exceed max_length")
+	}
+	if err := validateComponentString("placeholder", input.Placeholder, 0, 100); err != nil {
+		return err
+	}
+	if err := validateComponentString("value", input.Value, 0, 4000); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateModalSelect(menu SelectMenu, customIDs map[string]struct{}) error {
+	if err := validateCustomID(menu.CustomID, customIDs); err != nil {
+		return err
+	}
+	maxValues := menu.MaxValues
+	if maxValues == 0 {
+		maxValues = 1
+	}
+	limit := 25
+	if menu.Type() != SelectMenuComponent && len(menu.Options) != 0 {
+		return errors.New("options are only valid for string select menus")
+	}
+	if menu.Type() == SelectMenuComponent {
+		if len(menu.Options) < 1 || len(menu.Options) > limit {
+			return errors.New("options must contain between 1 and 25 items")
+		}
+		for i, option := range menu.Options {
+			if err := validateComponentString("option label", option.Label, 1, 100); err != nil {
+				return fmt.Errorf("options[%d]: %v", i, err)
+			}
+			if err := validateComponentString("option value", option.Value, 1, 100); err != nil {
+				return fmt.Errorf("options[%d]: %v", i, err)
+			}
+			if err := validateComponentString("option description", option.Description, 0, 100); err != nil {
+				return fmt.Errorf("options[%d]: %v", i, err)
+			}
+		}
+	}
+	if err := validateMinMax(menu.MinValues, maxValues, limit, menu.Required); err != nil {
+		return err
+	}
+	if err := validateComponentString("placeholder", menu.Placeholder, 0, 150); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateFileUpload(upload FileUpload, customIDs map[string]struct{}) error {
+	if err := validateCustomID(upload.CustomID, customIDs); err != nil {
+		return err
+	}
+	maxValues := upload.MaxValues
+	if maxValues == 0 {
+		maxValues = 1
+	}
+	return validateMinMax(upload.MinValues, maxValues, 10, upload.Required)
+}
+
+func validateRadioGroup(group RadioGroup, customIDs map[string]struct{}) error {
+	if err := validateCustomID(group.CustomID, customIDs); err != nil {
+		return err
+	}
+	if len(group.Options) < 2 || len(group.Options) > 10 {
+		return errors.New("options must contain between 2 and 10 items")
+	}
+	defaults, err := validateModalChoiceOptions(group.Options)
+	if err != nil {
+		return err
+	}
+	if defaults > 1 {
+		return errors.New("only one radio option may be selected by default")
+	}
+	return nil
+}
+
+func validateCheckboxGroup(group CheckboxGroup, customIDs map[string]struct{}) error {
+	if err := validateCustomID(group.CustomID, customIDs); err != nil {
+		return err
+	}
+	if len(group.Options) < 1 || len(group.Options) > 10 {
+		return errors.New("options must contain between 1 and 10 items")
+	}
+	defaults, err := validateModalChoiceOptions(group.Options)
+	if err != nil {
+		return err
+	}
+	maxValues := group.MaxValues
+	if maxValues == 0 {
+		maxValues = len(group.Options)
+	}
+	if err := validateMinMax(group.MinValues, maxValues, len(group.Options), group.Required); err != nil {
+		return err
+	}
+	if defaults > maxValues {
+		return errors.New("the number of default options must not exceed max_values")
+	}
+	return nil
+}
+
+func validateModalChoiceOptions(options []ModalChoiceOption) (int, error) {
+	values := make(map[string]struct{}, len(options))
+	defaults := 0
+	for i, option := range options {
+		if err := validateComponentString("option label", option.Label, 1, 100); err != nil {
+			return 0, fmt.Errorf("options[%d]: %v", i, err)
+		}
+		if err := validateComponentString("option value", option.Value, 1, 100); err != nil {
+			return 0, fmt.Errorf("options[%d]: %v", i, err)
+		}
+		if err := validateComponentString("option description", option.Description, 0, 100); err != nil {
+			return 0, fmt.Errorf("options[%d]: %v", i, err)
+		}
+		if _, exists := values[option.Value]; exists {
+			return 0, fmt.Errorf("options[%d]: value %q is duplicated", i, option.Value)
+		}
+		values[option.Value] = struct{}{}
+		if option.Default {
+			defaults++
+		}
+	}
+	return defaults, nil
+}
+
+func validateMinMax(minValues *int, maxValues, limit int, required *bool) error {
+	minimum := 1
+	if minValues != nil {
+		minimum = *minValues
+	}
+	if minimum < 0 || minimum > limit {
+		return fmt.Errorf("min_values must be between 0 and %d", limit)
+	}
+	if maxValues < 1 || maxValues > limit {
+		return fmt.Errorf("max_values must be between 1 and %d", limit)
+	}
+	if minimum > maxValues {
+		return errors.New("min_values must not exceed max_values")
+	}
+	if minimum == 0 && (required == nil || *required) {
+		return errors.New("min_values may be 0 only when required is false")
+	}
+	return nil
+}
+
+func validateCustomID(customID string, customIDs map[string]struct{}) error {
+	if err := validateComponentString("custom_id", customID, 1, 100); err != nil {
+		return err
+	}
+	if _, exists := customIDs[customID]; exists {
+		return fmt.Errorf("custom_id %q is duplicated", customID)
+	}
+	customIDs[customID] = struct{}{}
+	return nil
+}
+
+func validateComponentString(field, value string, minLength, maxLength int) error {
+	length := utf8.RuneCountInString(value)
+	if length < minLength || length > maxLength {
+		if minLength == 0 {
+			return fmt.Errorf("%s must be at most %d characters", field, maxLength)
+		}
+		return fmt.Errorf("%s must be between %d and %d characters", field, minLength, maxLength)
+	}
+	return nil
+}
+
+func isNilMessageComponent(component MessageComponent) bool {
+	if component == nil {
+		return true
+	}
+	value := reflect.ValueOf(component)
+	return value.Kind() == reflect.Ptr && value.IsNil()
 }

@@ -1,4 +1,4 @@
-// Discordgo - Discord bindings for Go
+// dgo - Discord bindings for Go
 // Available at https://github.com/darui3018823/dgo
 
 // Copyright 2015-2016 Bruce Marriner <bruce@sqls.net>.  All rights reserved.
@@ -26,19 +26,27 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"context"
 )
 
 // All error constants
 var (
-	ErrJSONUnmarshal           = errors.New("json unmarshal")
-	ErrStatusOffline           = errors.New("You can't set your Status to offline")
-	ErrVerificationLevelBounds = errors.New("VerificationLevel out of bounds, should be between 0 and 3")
-	ErrPruneDaysBounds         = errors.New("the number of days should be more than or equal to 1")
-	ErrGuildNoIcon             = errors.New("guild does not have an icon set")
-	ErrGuildNoSplash           = errors.New("guild does not have a splash set")
-	ErrUnauthorized            = errors.New("HTTP request was unauthorized. This could be because the provided token was not a bot token. Please add \"Bot \" to the start of your token. https://discord.com/developers/docs/reference#authentication-example-bot-token-authorization-header")
+	ErrJSONUnmarshal                       = errors.New("json unmarshal")
+	ErrStatusOffline                       = errors.New("you can't set your status to offline")
+	ErrVerificationLevelBounds             = errors.New("VerificationLevel out of bounds, should be between 0 and 3")
+	ErrPruneDaysBounds                     = errors.New("the number of days should be more than or equal to 1")
+	ErrGuildNoIcon                         = errors.New("guild does not have an icon set")
+	ErrGuildNoSplash                       = errors.New("guild does not have a splash set")
+	ErrUnauthorized                        = errors.New("HTTP request was unauthorized. This could be because the provided token was not a bot token. Please add \"Bot \" to the start of your token. https://discord.com/developers/docs/reference#authentication-example-bot-token-authorization-header")
+	ErrInviteAcceptUnsupported             = errors.New("accepting invites is not supported by Discord's public bot API; install bots through OAuth2 instead")
+	ErrGuildCreateUnsupported              = errors.New("creating guilds is no longer supported for Discord applications")
+	ErrChannelActiveThreadsUnsupported     = errors.New("the channel active threads route is no longer supported; use GuildThreadsActive")
+	ErrGuildIntegrationMutationUnsupported = errors.New("creating and editing guild integrations is no longer supported by Discord's public API")
+	ErrCommandPermissionsBatchUnsupported  = errors.New("batch application command permission edits are disabled; edit commands individually")
+	ErrOAuthApplicationCRUDUnsupported     = errors.New("OAuth2 application CRUD routes are not part of Discord's public bot API; use CurrentApplication or CurrentApplicationEdit")
+	ErrRESTResponseTooLarge                = errors.New("REST response body exceeds configured limit")
 )
 
 var (
@@ -57,19 +65,29 @@ type RESTError struct {
 	ResponseBody []byte
 
 	Message *APIErrorMessage // Message may be nil.
+
+	cause error
 }
 
 // newRestError returns a new REST API error.
 func newRestError(req *http.Request, resp *http.Response, body []byte) *RESTError {
+	return newRestErrorWithCause(req, resp, body, nil)
+}
+
+func newRestErrorWithCause(req *http.Request, resp *http.Response, body []byte, cause error) *RESTError {
+	safeBody := []byte(redactJSON(body))
+	safeRequest := sanitizeHTTPRequest(req)
+	safeResponse := sanitizeHTTPResponse(resp, safeRequest, safeBody)
 	restErr := &RESTError{
-		Request:      req,
-		Response:     resp,
-		ResponseBody: body,
+		Request:      safeRequest,
+		Response:     safeResponse,
+		ResponseBody: safeBody,
+		cause:        cause,
 	}
 
 	// Attempt to decode the error and assume no message was provided if it fails
 	var msg *APIErrorMessage
-	err := Unmarshal(body, &msg)
+	err := Unmarshal(safeBody, &msg)
 	if err == nil {
 		restErr.Message = msg
 	}
@@ -80,6 +98,26 @@ func newRestError(req *http.Request, resp *http.Response, body []byte) *RESTErro
 // Error returns a Rest API Error with its status code and body.
 func (r RESTError) Error() string {
 	return "HTTP " + r.Response.Status + ", " + string(r.ResponseBody)
+}
+
+// Unwrap exposes a typed cause such as ErrUnauthorized.
+func (r RESTError) Unwrap() error {
+	return r.cause
+}
+
+// RESTResponseTooLargeError reports a bounded response body violation.
+type RESTResponseTooLargeError struct {
+	Limit int64
+}
+
+// Error implements error.
+func (e RESTResponseTooLargeError) Error() string {
+	return fmt.Sprintf("%s (%d bytes)", ErrRESTResponseTooLarge, e.Limit)
+}
+
+// Unwrap makes errors.Is work with ErrRESTResponseTooLarge.
+func (e RESTResponseTooLargeError) Unwrap() error {
+	return ErrRESTResponseTooLarge
 }
 
 // RateLimitError is returned when a request exceeds a rate limit
@@ -97,8 +135,13 @@ func (e RateLimitError) Error() string {
 // RequestConfig is an HTTP request configuration.
 type RequestConfig struct {
 	Request                *http.Request
+	BodyFactory            func() (io.ReadCloser, error)
 	ShouldRetryOnRateLimit bool
 	MaxRestRetries         int
+	MaxResponseSize        int64
+	MaxRateLimitWait       time.Duration
+	MaxRetryWait           time.Duration
+	RetryUnsafeMethods     bool
 	Client                 *http.Client
 }
 
@@ -107,6 +150,9 @@ func newRequestConfig(s *Session, req *http.Request) *RequestConfig {
 	return &RequestConfig{
 		ShouldRetryOnRateLimit: s.ShouldRetryOnRateLimit,
 		MaxRestRetries:         s.MaxRestRetries,
+		MaxResponseSize:        s.MaxRestResponseSize,
+		MaxRateLimitWait:       s.MaxRestRateLimitWait,
+		MaxRetryWait:           s.MaxRestRetryWait,
 		Client:                 s.Client,
 		Request:                req,
 	}
@@ -136,6 +182,35 @@ func WithRetryOnRatelimit(retry bool) RequestOption {
 func WithRestRetries(max int) RequestOption {
 	return func(cfg *RequestConfig) {
 		cfg.MaxRestRetries = max
+	}
+}
+
+// WithRestResponseLimit changes the maximum response body size for a request.
+func WithRestResponseLimit(maxBytes int64) RequestOption {
+	return func(cfg *RequestConfig) {
+		cfg.MaxResponseSize = maxBytes
+	}
+}
+
+// WithRestRateLimitWait changes the maximum accepted wait from one 429 response.
+func WithRestRateLimitWait(max time.Duration) RequestOption {
+	return func(cfg *RequestConfig) {
+		cfg.MaxRateLimitWait = max
+	}
+}
+
+// WithRestRetryWait changes the maximum cumulative retry wait for a request.
+func WithRestRetryWait(max time.Duration) RequestOption {
+	return func(cfg *RequestConfig) {
+		cfg.MaxRetryWait = max
+	}
+}
+
+// WithUnsafeRestRetries allows transient response and network retries for
+// non-idempotent HTTP methods such as POST and PATCH.
+func WithUnsafeRestRetries(retry bool) RequestOption {
+	return func(cfg *RequestConfig) {
+		cfg.RetryUnsafeMethods = retry
 	}
 }
 
@@ -181,44 +256,74 @@ func (s *Session) RequestWithBucketID(method, urlStr string, data interface{}, b
 	return s.RequestRaw(method, urlStr, "application/json", body, bucketID, 0, options...)
 }
 
-// RequestRaw makes a (GET/POST/...) Requests to Discord REST API.
+// RequestRaw makes a (GET/POST/...) request to the Discord REST API.
 // Preferably use the other Request* methods but this lets you send JSON directly if that's what you have.
-// Sequence is the sequence number, if it fails with a 502 it will
-// retry with sequence+1 until it either succeeds or sequence >= session.MaxRestRetries
+// Sequence is the number of retries already consumed.
 func (s *Session) RequestRaw(method, urlStr, contentType string, b []byte, bucketID string, sequence int, options ...RequestOption) (response []byte, err error) {
+	cfg, err := s.prepareRESTRequest(method, urlStr, contentType, b, options...)
+	if err != nil {
+		return nil, err
+	}
+	return s.requestRawPrepared(cfg, contentType, b, bucketID, sequence)
+}
+
+// RequestRawWithBody makes a streaming REST request. bodyFactory must return a
+// fresh body for every HTTP attempt so rate-limit and transient retries do not
+// reuse a consumed reader.
+func (s *Session) RequestRawWithBody(method, urlStr, contentType string, bodyFactory func() (io.ReadCloser, error), bucketID string, sequence int, options ...RequestOption) ([]byte, error) {
+	if bodyFactory == nil {
+		return nil, fmt.Errorf("REST request body factory is nil")
+	}
+	cfg, err := s.prepareRESTRequest(method, urlStr, contentType, []byte{}, options...)
+	if err != nil {
+		return nil, err
+	}
+	cfg.BodyFactory = bodyFactory
+	return s.requestRawPrepared(cfg, contentType, nil, bucketID, sequence)
+}
+
+func (s *Session) requestRawPrepared(cfg *RequestConfig, contentType string, body []byte, bucketID string, sequence int) ([]byte, error) {
+	if sequence < 0 {
+		return nil, fmt.Errorf("REST retry sequence cannot be negative")
+	}
 	if bucketID == "" {
-		bucketID = strings.SplitN(urlStr, "?", 2)[0]
+		bucketID = strings.SplitN(cfg.Request.URL.String(), "?", 2)[0]
+	}
+	if s.Ratelimiter == nil {
+		return nil, fmt.Errorf("REST rate limiter is nil")
 	}
 
-	// Create a dummy request to extract context from options
-	req, _ := http.NewRequest(method, urlStr, nil)
-	cfg := newRequestConfig(s, req)
-	for _, opt := range options {
-		opt(cfg)
-	}
-	ctx := cfg.Request.Context()
-
-	bucket, err := s.Ratelimiter.LockBucketContext(ctx, bucketID)
+	routeKey, majorKey := restRateLimitKeys(cfg.Request.Method, cfg.Request.URL.String(), bucketID)
+	bucket, err := s.Ratelimiter.LockBucketRouteContext(cfg.Request.Context(), routeKey, majorKey)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.RequestWithLockedBucket(method, urlStr, contentType, b, bucket, sequence, options...)
+	return s.requestWithLockedBucket(cfg, contentType, body, bucket, sequence)
 }
 
 // RequestWithLockedBucket makes a request using a bucket that's already been locked
 func (s *Session) RequestWithLockedBucket(method, urlStr, contentType string, b []byte, bucket *Bucket, sequence int, options ...RequestOption) (response []byte, err error) {
-	if s.Debug {
-		log.Printf("API REQUEST %8s :: %s\n", method, urlStr)
-		log.Printf("API REQUEST  PAYLOAD :: [%s]\n", string(b))
+	if bucket == nil {
+		return nil, fmt.Errorf("REST rate limit bucket is nil")
 	}
-
-	req, err := http.NewRequest(method, urlStr, bytes.NewBuffer(b))
+	cfg, err := s.prepareRESTRequest(method, urlStr, contentType, b, options...)
 	if err != nil {
-		bucket.Release(nil)
-		return
+		_ = bucket.Release(nil)
+		return nil, err
 	}
+	if sequence < 0 {
+		_ = bucket.Release(nil)
+		return nil, fmt.Errorf("REST retry sequence cannot be negative")
+	}
+	return s.requestWithLockedBucket(cfg, contentType, b, bucket, sequence)
+}
 
+func (s *Session) prepareRESTRequest(method, urlStr, contentType string, body []byte, options ...RequestOption) (*RequestConfig, error) {
+	req, err := http.NewRequest(method, urlStr, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("invalid REST request method %q or URL %s", method, sanitizeURL(urlStr))
+	}
 	// Not used on initial login..
 	// TODO: Verify if a login, otherwise complain about no-token
 	if s.Token != "" {
@@ -227,128 +332,633 @@ func (s *Session) RequestWithLockedBucket(method, urlStr, contentType string, b 
 
 	// Discord's API returns a 400 Bad Request is Content-Type is set, but the
 	// request body is empty.
-	if b != nil {
+	if body != nil {
 		req.Header.Set("Content-Type", contentType)
 	}
-
-	// TODO: Make a configurable static variable.
 	req.Header.Set("User-Agent", s.UserAgent)
 
 	cfg := newRequestConfig(s, req)
 	for _, opt := range options {
-		opt(cfg)
-	}
-	req = cfg.Request
-
-	if s.Debug {
-		for k, v := range req.Header {
-			// Redact sensitive headers before logging to avoid leaking secrets.
-			lowerKey := strings.ToLower(k)
-			valuesToLog := v
-			if lowerKey == "authorization" || lowerKey == "cookie" || lowerKey == "set-cookie" {
-				redactedValues := make([]string, len(v))
-				for i := range v {
-					redactedValues[i] = "REDACTED"
-				}
-				valuesToLog = redactedValues
-			}
-			log.Printf("API REQUEST   HEADER :: [%s] = %+v\n", k, valuesToLog)
+		if opt != nil {
+			opt(cfg)
 		}
 	}
-
-	resp, err := cfg.Client.Do(req)
-	if err != nil {
-		bucket.Release(nil)
-		return
+	if cfg.Request == nil {
+		return nil, fmt.Errorf("REST request option produced a nil request")
 	}
-	defer func() {
-		err2 := resp.Body.Close()
-		if s.Debug && err2 != nil {
-			log.Println("error closing resp body")
-		}
-	}()
-
-	err = bucket.Release(resp.Header)
-	if err != nil {
-		return
+	if cfg.Request.URL == nil {
+		return nil, fmt.Errorf("REST request URL is nil")
 	}
-
-	response, err = io.ReadAll(resp.Body)
-	if err != nil {
-		return
+	if cfg.Client == nil {
+		return nil, fmt.Errorf("REST HTTP client is nil")
 	}
+	if cfg.MaxRestRetries < 0 {
+		cfg.MaxRestRetries = 0
+	}
+	if cfg.MaxResponseSize <= 0 {
+		cfg.MaxResponseSize = 32 << 20
+	}
+	if cfg.MaxRateLimitWait <= 0 {
+		cfg.MaxRateLimitWait = time.Minute
+	}
+	if cfg.MaxRetryWait <= 0 {
+		cfg.MaxRetryWait = 5 * time.Minute
+	}
+	return cfg, nil
+}
 
-	if s.Debug {
-		log.Printf("API RESPONSE STATUS :: %s\n", resp.Status)
-
-		for k, v := range resp.Header {
-			lowerKey := strings.ToLower(k)
-			valuesToLog := v
-
-			if lowerKey == "authorization" || lowerKey == "cookie" || lowerKey == "set-cookie" {
-				redactedValues := make([]string, len(v))
-				for i := range v {
-					redactedValues[i] = "REDACTED"
-				}
-				valuesToLog = redactedValues
-			}
-			log.Printf("API RESPONSE HEADER :: [%s] = %+v\n", k, valuesToLog)
-		}
+func (s *Session) requestWithLockedBucket(cfg *RequestConfig, contentType string, body []byte, bucket *Bucket, sequence int) ([]byte, error) {
+	limiter := s.Ratelimiter
+	if bucket != nil && bucket.ratelimiter != nil {
+		limiter = bucket.ratelimiter
+	}
+	if limiter == nil {
+		_ = bucket.Release(nil)
+		return nil, fmt.Errorf("REST rate limiter is nil")
+	}
+	if err := limiter.CheckInvalidRequestLimit(); err != nil {
+		_ = bucket.Release(nil)
+		return nil, err
 	}
 
-	switch resp.StatusCode {
-	case http.StatusOK:
-	case http.StatusCreated:
-	case http.StatusNoContent:
-	case http.StatusBadGateway:
-		// Retry sending request if possible
-		if sequence < cfg.MaxRestRetries {
+	retries := sequence
+	var totalWait time.Duration
 
-			s.log(LogInformational, "%s Failed (%s), Retrying...", urlStr, resp.Status)
-			response, err = s.RequestWithLockedBucket(method, urlStr, contentType, b, s.Ratelimiter.LockBucketObject(bucket), sequence+1, options...)
-		} else {
-			err = fmt.Errorf("Exceeded Max retries HTTP %s, %s", resp.Status, response)
-		}
-	case 429: // TOO MANY REQUESTS - Rate limiting
-		rl := TooManyRequests{}
-		err = Unmarshal(response, &rl)
+	for {
+		req, err := cloneRESTRequest(cfg.Request, contentType, body, cfg.BodyFactory)
 		if err != nil {
-			s.log(LogError, "rate limit unmarshal error, %s", err)
-			return
+			_ = bucket.Release(nil)
+			return nil, err
+		}
+		if s.Debug {
+			log.Printf("API REQUEST %8s :: %s\n", req.Method, sanitizeURL(req.URL.String()))
+			if cfg.BodyFactory != nil {
+				log.Printf("API REQUEST  PAYLOAD :: [streaming body omitted]\n")
+			} else {
+				log.Printf("API REQUEST  PAYLOAD :: [%s]\n", redactJSON(body))
+			}
+			logHTTPHeaders("API REQUEST   HEADER", req.Header)
 		}
 
-		if cfg.ShouldRetryOnRateLimit {
-			s.log(LogInformational, "Rate Limiting %s, retry in %v", urlStr, rl.RetryAfter)
-			s.handleEvent(rateLimitEventType, &RateLimit{TooManyRequests: &rl, URL: urlStr})
-
-			// Wait for the rate limit or context cancellation
-			select {
-			case <-cfg.Request.Context().Done():
-				return nil, cfg.Request.Context().Err()
-			case <-time.After(rl.RetryAfter):
+		resp, requestErr := cfg.Client.Do(req)
+		if requestErr != nil {
+			_ = bucket.Release(nil)
+			if ctxErr := req.Context().Err(); ctxErr != nil {
+				return nil, ctxErr
 			}
-
-			// Re-lock the bucket with context
-			bucket, err = s.Ratelimiter.LockBucketObjectContext(cfg.Request.Context(), bucket)
+			if retries >= cfg.MaxRestRetries || !canRetryRESTMethod(req.Method, cfg.RetryUnsafeMethods) {
+				return nil, sanitizeRESTRequestError(requestErr)
+			}
+			delay := restRetryDelay(retries)
+			if err := waitForRESTRetry(req.Context(), delay, &totalWait, cfg.MaxRetryWait); err != nil {
+				return nil, fmt.Errorf("REST network retry wait failed: %w", err)
+			}
+			retries++
+			bucket, err = relockRESTBucket(req.Context(), s.Ratelimiter, bucket)
 			if err != nil {
 				return nil, err
 			}
+			continue
+		}
 
-			response, err = s.RequestWithLockedBucket(method, urlStr, contentType, b, bucket, sequence, options...)
-		} else {
-			err = &RateLimitError{&RateLimit{TooManyRequests: &rl, URL: urlStr}}
+		response, readErr := readRESTResponseBody(resp, cfg.MaxResponseSize)
+		closeErr := resp.Body.Close()
+		releaseErr := bucket.Release(resp.Header)
+		invalidStatus := limiter.RecordResponse(resp.StatusCode)
+		if s.Debug {
+			log.Printf("API RESPONSE STATUS :: %s\n", resp.Status)
+			logHTTPHeaders("API RESPONSE HEADER", resp.Header)
+			if closeErr != nil {
+				log.Println("error closing resp body")
+			}
 		}
-	case http.StatusUnauthorized:
-		if strings.Index(s.Token, "Bot ") != 0 {
+		if readErr != nil {
+			return nil, readErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		if releaseErr != nil {
+			return nil, releaseErr
+		}
+		if invalidStatus.WarningTriggered && resp.StatusCode != http.StatusTooManyRequests {
+			s.handleEvent(rateLimitEventType, invalidRequestRateLimitEvent(req, invalidStatus))
+		}
+		if invalidStatus.Blocked && resp.StatusCode != http.StatusTooManyRequests {
+			return nil, InvalidRequestLimitError{
+				Count:      invalidStatus.Count,
+				Limit:      invalidStatus.Limit,
+				ResetAfter: invalidStatus.ResetAfter,
+			}
+		}
+
+		switch {
+		case resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices:
+			return response, nil
+
+		case resp.StatusCode == http.StatusTooManyRequests:
+			rateLimit := TooManyRequests{}
+			if err := Unmarshal(response, &rateLimit); err != nil {
+				return nil, fmt.Errorf("rate limit response decode failed: %w", err)
+			}
+			if rateLimit.Global {
+				limiter.ApplyGlobalLimit(rateLimit.RetryAfter)
+			}
+			rateLimitErr := &RateLimitError{&RateLimit{
+				TooManyRequests:       &rateLimit,
+				URL:                   sanitizeURL(req.URL.String()),
+				Scope:                 rateLimitScope(resp.Header, rateLimit.Global),
+				Limit:                 rateLimitHeaderInt(resp.Header, "X-RateLimit-Limit"),
+				Remaining:             rateLimitHeaderInt(resp.Header, "X-RateLimit-Remaining"),
+				ResetAfter:            rateLimit.RetryAfter,
+				InvalidRequestCount:   invalidStatus.Count,
+				InvalidRequestLimit:   invalidStatus.Limit,
+				InvalidRequestWarning: invalidStatus.Warning,
+			}}
+			s.handleEvent(rateLimitEventType, rateLimitErr.RateLimit)
+			if invalidStatus.Blocked {
+				return nil, InvalidRequestLimitError{
+					Count:      invalidStatus.Count,
+					Limit:      invalidStatus.Limit,
+					ResetAfter: invalidStatus.ResetAfter,
+				}
+			}
+			if !cfg.ShouldRetryOnRateLimit {
+				return nil, rateLimitErr
+			}
+			if retries >= cfg.MaxRestRetries {
+				return nil, fmt.Errorf("exceeded maximum REST retries: %w", rateLimitErr)
+			}
+			if rateLimit.RetryAfter < 0 || rateLimit.RetryAfter > cfg.MaxRateLimitWait {
+				return nil, fmt.Errorf(
+					"rate limit wait %s exceeds configured maximum %s: %w",
+					rateLimit.RetryAfter,
+					cfg.MaxRateLimitWait,
+					rateLimitErr,
+				)
+			}
+			retryDelay := rateLimitRetryDelay(rateLimit.RetryAfter, cfg.MaxRateLimitWait)
+			s.log(LogInformational, "Rate Limiting %s, retry in %v", sanitizeURL(req.URL.String()), retryDelay)
+			if err := waitForRESTRetry(req.Context(), retryDelay, &totalWait, cfg.MaxRetryWait); err != nil {
+				return nil, fmt.Errorf("rate limit retry wait failed: %w", err)
+			}
+			retries++
+			bucket, err = relockRESTBucket(req.Context(), s.Ratelimiter, bucket)
+			if err != nil {
+				return nil, err
+			}
+			continue
+
+		case isTransientRESTStatus(resp.StatusCode):
+			restErr := newRestError(req, resp, response)
+			if retries >= cfg.MaxRestRetries || !canRetryRESTMethod(req.Method, cfg.RetryUnsafeMethods) {
+				if retries >= cfg.MaxRestRetries && canRetryRESTMethod(req.Method, cfg.RetryUnsafeMethods) {
+					return nil, fmt.Errorf("exceeded maximum REST retries: %w", restErr)
+				}
+				return nil, restErr
+			}
+			s.log(LogInformational, "%s Failed (%s), Retrying...", sanitizeURL(req.URL.String()), resp.Status)
+			delay := restRetryDelay(retries)
+			if err := waitForRESTRetry(req.Context(), delay, &totalWait, cfg.MaxRetryWait); err != nil {
+				return nil, fmt.Errorf("REST transient retry wait failed: %w", err)
+			}
+			retries++
+			bucket, err = relockRESTBucket(req.Context(), s.Ratelimiter, bucket)
+			if err != nil {
+				return nil, err
+			}
+			continue
+
+		case resp.StatusCode == http.StatusUnauthorized:
 			s.log(LogInformational, "%s", ErrUnauthorized.Error())
-			err = ErrUnauthorized
+			return nil, newRestErrorWithCause(req, resp, response, ErrUnauthorized)
+
+		default:
+			return nil, newRestError(req, resp, response)
 		}
-		fallthrough
-	default: // Error condition
-		err = newRestError(req, resp, response)
+	}
+}
+
+func cloneRESTRequest(template *http.Request, contentType string, body []byte, bodyFactory func() (io.ReadCloser, error)) (*http.Request, error) {
+	if template == nil || template.URL == nil {
+		return nil, fmt.Errorf("REST request template is invalid")
+	}
+	req := template.Clone(template.Context())
+	if bodyFactory != nil {
+		stream, err := bodyFactory()
+		if err != nil {
+			return nil, fmt.Errorf("open REST request body: %w", err)
+		}
+		if stream == nil {
+			return nil, fmt.Errorf("REST request body factory returned nil")
+		}
+		req.Body = stream
+		req.GetBody = bodyFactory
+		req.ContentLength = -1
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		return req, nil
+	}
+	if body == nil {
+		req.Body = nil
+		req.GetBody = nil
+		req.ContentLength = 0
+		return req, nil
+	}
+	newBody := func() io.ReadCloser {
+		return io.NopCloser(bytes.NewReader(body))
+	}
+	req.Body = newBody()
+	req.GetBody = func() (io.ReadCloser, error) {
+		return newBody(), nil
+	}
+	req.ContentLength = int64(len(body))
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	return req, nil
+}
+
+func readRESTResponseBody(resp *http.Response, limit int64) ([]byte, error) {
+	if resp == nil || resp.Body == nil {
+		return nil, fmt.Errorf("REST response or body is nil")
+	}
+	if resp.ContentLength > limit {
+		return nil, &RESTResponseTooLargeError{Limit: limit}
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > limit {
+		return nil, &RESTResponseTooLargeError{Limit: limit}
+	}
+	return body, nil
+}
+
+func waitForRESTRetry(ctx context.Context, delay time.Duration, totalWait *time.Duration, maxTotalWait time.Duration) error {
+	if delay < 0 {
+		return fmt.Errorf("negative retry delay %s", delay)
+	}
+	if maxTotalWait > 0 && *totalWait+delay > maxTotalWait {
+		return fmt.Errorf("cumulative retry wait would exceed %s", maxTotalWait)
+	}
+	*totalWait += delay
+	if delay == 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			return nil
+		}
 	}
 
-	return
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func restRetryDelay(retry int) time.Duration {
+	if retry < 0 {
+		retry = 0
+	}
+	if retry > 3 {
+		retry = 3
+	}
+	base := 250 * time.Millisecond * time.Duration(1<<retry)
+	jitterRange := base / 4
+	if jitterRange <= 0 {
+		return base
+	}
+	jitter := time.Duration(time.Now().UnixNano() % int64(jitterRange))
+	return base + jitter
+}
+
+func rateLimitRetryDelay(delay, maximum time.Duration) time.Duration {
+	if delay <= 0 {
+		return delay
+	}
+	jitterRange := delay / 10
+	if jitterRange > 50*time.Millisecond {
+		jitterRange = 50 * time.Millisecond
+	}
+	if jitterRange <= 0 {
+		return delay
+	}
+	jitter := time.Duration(time.Now().UnixNano() % int64(jitterRange))
+	if maximum > 0 && delay+jitter > maximum {
+		return delay
+	}
+	return delay + jitter
+}
+
+func canRetryRESTMethod(method string, retryUnsafe bool) bool {
+	if retryUnsafe {
+		return true
+	}
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete, http.MethodOptions, http.MethodTrace:
+		return true
+	default:
+		return false
+	}
+}
+
+func isTransientRESTStatus(status int) bool {
+	switch status {
+	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusGatewayTimeout, 524:
+		return true
+	default:
+		return false
+	}
+}
+
+func relockRESTBucket(ctx context.Context, limiter *RateLimiter, bucket *Bucket) (*Bucket, error) {
+	if bucket == nil {
+		return nil, fmt.Errorf("REST rate limit bucket is nil")
+	}
+	if bucket.ratelimiter != nil {
+		limiter = bucket.ratelimiter
+	}
+	if limiter == nil {
+		return nil, fmt.Errorf("REST rate limiter is nil")
+	}
+	if err := limiter.CheckInvalidRequestLimit(); err != nil {
+		return nil, err
+	}
+	if bucket.RouteKey != "" {
+		return limiter.LockBucketRouteContext(ctx, bucket.RouteKey, bucket.MajorKey)
+	}
+	return limiter.LockBucketObjectContext(ctx, bucket)
+}
+
+func rateLimitScope(headers http.Header, global bool) RateLimitScope {
+	if global {
+		return RateLimitScopeGlobal
+	}
+	scope := RateLimitScope(strings.ToLower(headers.Get("X-RateLimit-Scope")))
+	switch scope {
+	case RateLimitScopeUser, RateLimitScopeGlobal, RateLimitScopeShared:
+		return scope
+	default:
+		return scope
+	}
+}
+
+func rateLimitHeaderInt(headers http.Header, key string) int {
+	value, err := strconv.Atoi(headers.Get(key))
+	if err != nil {
+		return 0
+	}
+	return value
+}
+
+func invalidRequestRateLimitEvent(req *http.Request, status InvalidRequestStatus) *RateLimit {
+	requestURL := ""
+	if req != nil && req.URL != nil {
+		requestURL = sanitizeURL(req.URL.String())
+	}
+	return &RateLimit{
+		TooManyRequests: &TooManyRequests{
+			Message:    "Discord invalid-request warning threshold reached",
+			RetryAfter: status.ResetAfter,
+		},
+		URL:                   requestURL,
+		InvalidRequestCount:   status.Count,
+		InvalidRequestLimit:   status.Limit,
+		InvalidRequestWarning: true,
+	}
+}
+
+func logHTTPHeaders(prefix string, headers http.Header) {
+	for key, values := range sanitizeHTTPHeaders(headers) {
+		log.Printf("%s :: [%s] = %+v\n", prefix, key, values)
+	}
+}
+
+func sanitizeHTTPHeaders(headers http.Header) http.Header {
+	safe := make(http.Header, len(headers))
+	for key, values := range headers {
+		if isSensitiveLogKey(key) || strings.EqualFold(key, "cookie") || strings.EqualFold(key, "set-cookie") {
+			safe[key] = []string{redactedValue}
+			continue
+		}
+		safe[key] = append([]string(nil), values...)
+	}
+	return safe
+}
+
+func sanitizeHTTPRequest(req *http.Request) *http.Request {
+	if req == nil {
+		return nil
+	}
+	safe := req.Clone(context.Background())
+	safe.Header = sanitizeHTTPHeaders(req.Header)
+	safe.Body = nil
+	safe.GetBody = nil
+	safe.ContentLength = 0
+	if req.URL != nil {
+		if parsed, err := url.Parse(sanitizeURL(req.URL.String())); err == nil {
+			safe.URL = parsed
+			safe.RequestURI = parsed.RequestURI()
+		}
+	}
+	return safe
+}
+
+func sanitizeHTTPResponse(resp *http.Response, request *http.Request, body []byte) *http.Response {
+	if resp == nil {
+		return nil
+	}
+	safe := new(http.Response)
+	*safe = *resp
+	safe.Header = sanitizeHTTPHeaders(resp.Header)
+	safe.Request = request
+	safe.Body = io.NopCloser(bytes.NewReader(body))
+	safe.ContentLength = int64(len(body))
+	return safe
+}
+
+func sanitizeRESTRequestError(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return &url.Error{
+			Op:  urlErr.Op,
+			URL: sanitizeURL(urlErr.URL),
+			Err: urlErr.Err,
+		}
+	}
+	return err
+}
+
+// GuildMessagesSearch searches messages in a guild using the supplied filters.
+func (s *Session) GuildMessagesSearch(guildID string, params *GuildMessageSearchParams, options ...RequestOption) (*GuildMessageSearchResult, error) {
+	endpoint := EndpointGuildMessagesSearch(guildID)
+	query, err := guildMessageSearchQuery(params)
+	if err != nil {
+		return nil, err
+	}
+	requestURL := endpoint
+	if len(query) > 0 {
+		requestURL += "?" + query.Encode()
+	}
+
+	body, err := s.RequestWithBucketID("GET", requestURL, nil, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+	var pending struct {
+		Code             int     `json:"code"`
+		Message          string  `json:"message"`
+		DocumentsIndexed int     `json:"documents_indexed"`
+		RetryAfter       float64 `json:"retry_after"`
+	}
+	if err = unmarshal(body, &pending); err != nil {
+		return nil, err
+	}
+	if pending.Code == 110000 {
+		return nil, &GuildMessageSearchIndexingError{
+			Code:             pending.Code,
+			Message:          pending.Message,
+			DocumentsIndexed: pending.DocumentsIndexed,
+			RetryAfter:       time.Duration(pending.RetryAfter * float64(time.Second)),
+		}
+	}
+	result := &GuildMessageSearchResult{}
+	if err = unmarshal(body, result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func guildMessageSearchQuery(params *GuildMessageSearchParams) (url.Values, error) {
+	query := url.Values{}
+	if params == nil {
+		return query, nil
+	}
+	if params.Limit < 0 || params.Limit > 25 {
+		return nil, errors.New("guild message search limit must be between 1 and 25 when provided")
+	}
+	if params.Offset < 0 || params.Offset > 9975 {
+		return nil, errors.New("guild message search offset must be between 0 and 9975")
+	}
+	if params.Slop != nil && (*params.Slop < 0 || *params.Slop > 100) {
+		return nil, errors.New("guild message search slop must be between 0 and 100")
+	}
+	if utf8.RuneCountInString(params.Content) > 1024 {
+		return nil, errors.New("guild message search content must be at most 1024 characters")
+	}
+	if len(params.ChannelIDs) > 500 {
+		return nil, errors.New("guild message search channel IDs must not exceed 500")
+	}
+	for name, values := range map[string][]string{
+		"author IDs":             params.AuthorIDs,
+		"mentions":               params.Mentions,
+		"mention role IDs":       params.MentionRoleIDs,
+		"replied-to user IDs":    params.RepliedToUserIDs,
+		"replied-to message IDs": params.RepliedToMessageIDs,
+		"embed providers":        params.EmbedProviders,
+		"link hostnames":         params.LinkHostnames,
+		"attachment filenames":   params.AttachmentFilenames,
+		"attachment extensions":  params.AttachmentExtensions,
+	} {
+		if len(values) > 100 {
+			return nil, fmt.Errorf("guild message search %s must not exceed 100", name)
+		}
+	}
+	if err := validateSearchStrings(params.EmbedProviders, 256, "embed provider"); err != nil {
+		return nil, err
+	}
+	if err := validateSearchStrings(params.LinkHostnames, 256, "link hostname"); err != nil {
+		return nil, err
+	}
+	if err := validateSearchStrings(params.AttachmentFilenames, 1024, "attachment filename"); err != nil {
+		return nil, err
+	}
+	if err := validateSearchStrings(params.AttachmentExtensions, 256, "attachment extension"); err != nil {
+		return nil, err
+	}
+	if params.SortBy != "" && params.SortBy != GuildMessageSearchSortTimestamp && params.SortBy != GuildMessageSearchSortRelevance {
+		return nil, fmt.Errorf("unsupported guild message search sort mode %q", params.SortBy)
+	}
+	if params.SortOrder != "" && params.SortOrder != GuildMessageSearchSortAscending && params.SortOrder != GuildMessageSearchSortDescending {
+		return nil, fmt.Errorf("unsupported guild message search sort order %q", params.SortOrder)
+	}
+
+	if params.Limit > 0 {
+		query.Set("limit", strconv.Itoa(params.Limit))
+	}
+	if params.Offset > 0 {
+		query.Set("offset", strconv.Itoa(params.Offset))
+	}
+	if params.MaxID != "" {
+		query.Set("max_id", params.MaxID)
+	}
+	if params.MinID != "" {
+		query.Set("min_id", params.MinID)
+	}
+	if params.Slop != nil {
+		query.Set("slop", strconv.Itoa(*params.Slop))
+	}
+	if params.Content != "" {
+		query.Set("content", params.Content)
+	}
+	addSearchValues(query, "channel_id", params.ChannelIDs)
+	for _, value := range params.AuthorTypes {
+		query.Add("author_type", string(value))
+	}
+	addSearchValues(query, "author_id", params.AuthorIDs)
+	addSearchValues(query, "mentions", params.Mentions)
+	addSearchValues(query, "mentions_role_id", params.MentionRoleIDs)
+	setSearchBool(query, "mention_everyone", params.MentionEveryone)
+	addSearchValues(query, "replied_to_user_id", params.RepliedToUserIDs)
+	addSearchValues(query, "replied_to_message_id", params.RepliedToMessageIDs)
+	setSearchBool(query, "pinned", params.Pinned)
+	for _, value := range params.Has {
+		query.Add("has", string(value))
+	}
+	for _, value := range params.EmbedTypes {
+		query.Add("embed_type", string(value))
+	}
+	addSearchValues(query, "embed_provider", params.EmbedProviders)
+	addSearchValues(query, "link_hostname", params.LinkHostnames)
+	addSearchValues(query, "attachment_filename", params.AttachmentFilenames)
+	addSearchValues(query, "attachment_extension", params.AttachmentExtensions)
+	if params.SortBy != "" {
+		query.Set("sort_by", string(params.SortBy))
+	}
+	if params.SortOrder != "" {
+		query.Set("sort_order", string(params.SortOrder))
+	}
+	setSearchBool(query, "include_nsfw", params.IncludeNSFW)
+	return query, nil
+}
+
+func validateSearchStrings(values []string, maxLength int, name string) error {
+	for i, value := range values {
+		if utf8.RuneCountInString(value) > maxLength {
+			return fmt.Errorf("guild message search %s at index %d must be at most %d characters", name, i, maxLength)
+		}
+	}
+	return nil
+}
+
+func addSearchValues(query url.Values, key string, values []string) {
+	for _, value := range values {
+		query.Add(key, value)
+	}
+}
+
+func setSearchBool(query url.Values, key string, value *bool) {
+	if value != nil {
+		query.Set(key, strconv.FormatBool(*value))
+	}
 }
 
 func unmarshal(data []byte, v interface{}) error {
@@ -449,6 +1059,39 @@ func (s *Session) UserChannelCreate(recipientID string, options ...RequestOption
 	body, err := s.RequestWithBucketID("POST", EndpointUserChannels("@me"), data, EndpointUserChannels(""), options...)
 	if err != nil {
 		return
+	}
+
+	err = unmarshal(body, &st)
+	return
+}
+
+// GroupDMCreate creates a group DM with multiple users. Every access token
+// must belong to a user who granted the application the gdm.join OAuth2 scope.
+func (s *Session) GroupDMCreate(data *GroupDMCreateParams, options ...RequestOption) (st *Channel, err error) {
+	if data == nil {
+		return nil, fmt.Errorf("group DM parameters cannot be nil")
+	}
+	if len(data.AccessTokens) < 2 {
+		return nil, fmt.Errorf("group DM requires access tokens for at least two users")
+	}
+	for i, token := range data.AccessTokens {
+		if strings.TrimSpace(token) == "" {
+			return nil, fmt.Errorf("group DM access token %d cannot be empty", i)
+		}
+	}
+	if data.Nicks == nil {
+		return nil, fmt.Errorf("group DM nicknames cannot be nil")
+	}
+	for userID := range data.Nicks {
+		if strings.TrimSpace(userID) == "" {
+			return nil, fmt.Errorf("group DM nickname user ID cannot be empty")
+		}
+	}
+
+	endpoint := EndpointUserChannels("@me")
+	body, err := s.RequestWithBucketID(http.MethodPost, endpoint, data, endpoint, options...)
+	if err != nil {
+		return nil, err
 	}
 
 	err = unmarshal(body, &st)
@@ -659,52 +1302,25 @@ func (s *Session) GuildPreview(guildID string, options ...RequestOption) (st *Gu
 	return
 }
 
-// GuildCreate creates a new Guild
+// GuildCreate formerly created a new guild.
+//
+// Deprecated: Discord applications can no longer create guilds.
 // name      : A name for the Guild (2-100 characters)
 func (s *Session) GuildCreate(name string, options ...RequestOption) (st *Guild, err error) {
-
-	data := struct {
-		Name string `json:"name"`
-	}{name}
-
-	body, err := s.RequestWithBucketID("POST", EndpointGuildCreate, data, EndpointGuildCreate, options...)
-	if err != nil {
-		return
-	}
-
-	err = unmarshal(body, &st)
-	return
+	return nil, ErrGuildCreateUnsupported
 }
 
-// GuildEdit edits a new Guild
-// guildID   : The ID of a Guild
-// g 		 : A GuildParams struct with the values Name, Region and VerificationLevel defined.
+// GuildEdit edits a Guild.
 func (s *Session) GuildEdit(guildID string, g *GuildParams, options ...RequestOption) (st *Guild, err error) {
+	if g == nil {
+		return nil, fmt.Errorf("guild edit parameters are nil")
+	}
 
 	// Bounds checking for VerificationLevel, interval: [0, 4]
 	if g.VerificationLevel != nil {
 		val := *g.VerificationLevel
 		if val < 0 || val > 4 {
 			err = ErrVerificationLevelBounds
-			return
-		}
-	}
-
-	// Bounds checking for regions
-	if g.Region != "" {
-		isValid := false
-		regions, _ := s.VoiceRegions(options...)
-		for _, r := range regions {
-			if g.Region == r.ID {
-				isValid = true
-			}
-		}
-		if !isValid {
-			var valid []string
-			for _, r := range regions {
-				valid = append(valid, r.ID)
-			}
-			err = fmt.Errorf("Region not a valid region (%q)", valid)
 			return
 		}
 	}
@@ -819,6 +1435,27 @@ func (s *Session) GuildBanCreateWithReason(guildID, userID, reason string, days 
 func (s *Session) GuildBanDelete(guildID, userID string, options ...RequestOption) (err error) {
 
 	_, err = s.RequestWithBucketID("DELETE", EndpointGuildBan(guildID, userID), nil, EndpointGuildBan(guildID, ""), options...)
+	return
+}
+
+// GuildBulkBan bans up to 200 users from a guild.
+func (s *Session) GuildBulkBan(guildID string, data *GuildBulkBanParams, options ...RequestOption) (st *GuildBulkBanResponse, err error) {
+	if data == nil {
+		return nil, fmt.Errorf("bulk ban parameters cannot be nil")
+	}
+	if len(data.UserIDs) == 0 || len(data.UserIDs) > 200 {
+		return nil, fmt.Errorf("bulk ban must contain between 1 and 200 user IDs")
+	}
+	if data.DeleteMessageSeconds < 0 || data.DeleteMessageSeconds > 604800 {
+		return nil, fmt.Errorf("delete message seconds must be between 0 and 604800")
+	}
+
+	endpoint := EndpointGuildBulkBan(guildID)
+	body, err := s.RequestWithBucketID(http.MethodPost, endpoint, data, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &st)
 	return
 }
 
@@ -960,7 +1597,7 @@ func (s *Session) GuildMemberEditComplex(guildID, userID string, data *GuildMemb
 // channelID : The ID of a channel to move user to or nil to remove from voice channel
 //
 // NOTE : I am not entirely set on the name of this function and it may change
-// prior to the final 1.0.0 release of Discordgo
+// prior to the final 1.0.0 release of dgo
 func (s *Session) GuildMemberMove(guildID string, userID string, channelID *string, options ...RequestOption) (err error) {
 	data := struct {
 		ChannelID *string `json:"channel_id"`
@@ -1148,10 +1785,42 @@ func (s *Session) GuildRoles(guildID string, options ...RequestOption) (st []*Ro
 	return // TODO return pointer
 }
 
+// GuildRole returns a role from a guild.
+func (s *Session) GuildRole(guildID, roleID string, options ...RequestOption) (st *Role, err error) {
+	body, err := s.RequestWithBucketID(
+		http.MethodGet,
+		EndpointGuildRole(guildID, roleID),
+		nil,
+		EndpointGuildRole(guildID, ""),
+		options...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &st)
+	return
+}
+
+// GuildRoleMemberCounts returns a map of role IDs to member counts. The
+// @everyone role is not included.
+func (s *Session) GuildRoleMemberCounts(guildID string, options ...RequestOption) (memberCounts map[string]uint64, err error) {
+	endpoint := EndpointGuildRoleMemberCounts(guildID)
+	body, err := s.RequestWithBucketID(http.MethodGet, endpoint, nil, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &memberCounts)
+	return
+}
+
 // GuildRoleCreate creates a new Guild Role and returns it.
 // guildID : The ID of a Guild.
 // data    : New Role parameters.
 func (s *Session) GuildRoleCreate(guildID string, data *RoleParams, options ...RequestOption) (st *Role, err error) {
+	if err = validateRoleParams(data); err != nil {
+		return nil, err
+	}
+
 	body, err := s.RequestWithBucketID("POST", EndpointGuildRoles(guildID), data, EndpointGuildRoles(guildID), options...)
 	if err != nil {
 		return
@@ -1167,10 +1836,8 @@ func (s *Session) GuildRoleCreate(guildID string, data *RoleParams, options ...R
 // roleID    : The ID of a Role.
 // data 		 : Updated Role data.
 func (s *Session) GuildRoleEdit(guildID, roleID string, data *RoleParams, options ...RequestOption) (st *Role, err error) {
-
-	// Prevent sending a color int that is too big.
-	if data.Color != nil && *data.Color > 0xFFFFFF {
-		return nil, fmt.Errorf("color value cannot be larger than 0xFFFFFF")
+	if err = validateRoleParams(data); err != nil {
+		return nil, err
 	}
 
 	body, err := s.RequestWithBucketID("PATCH", EndpointGuildRole(guildID, roleID), data, EndpointGuildRole(guildID, ""), options...)
@@ -1181,6 +1848,54 @@ func (s *Session) GuildRoleEdit(guildID, roleID string, data *RoleParams, option
 	err = unmarshal(body, &st)
 
 	return
+}
+
+func validateRoleParams(data *RoleParams) error {
+	if data == nil {
+		return fmt.Errorf("role parameters cannot be nil")
+	}
+	if data.Color != nil {
+		if err := validateRoleColor("color", *data.Color); err != nil {
+			return err
+		}
+	}
+	if data.Colors == nil {
+		return nil
+	}
+
+	colors := data.Colors
+	if err := validateRoleColor("primary_color", colors.PrimaryColor); err != nil {
+		return err
+	}
+	if colors.SecondaryColor != nil {
+		if err := validateRoleColor("secondary_color", *colors.SecondaryColor); err != nil {
+			return err
+		}
+	}
+	if colors.TertiaryColor != nil {
+		if err := validateRoleColor("tertiary_color", *colors.TertiaryColor); err != nil {
+			return err
+		}
+		if colors.SecondaryColor == nil ||
+			colors.PrimaryColor != RoleHolographicPrimaryColor ||
+			*colors.SecondaryColor != RoleHolographicSecondaryColor ||
+			*colors.TertiaryColor != RoleHolographicTertiaryColor {
+			return fmt.Errorf(
+				"tertiary_color requires the holographic preset (%d, %d, %d)",
+				RoleHolographicPrimaryColor,
+				RoleHolographicSecondaryColor,
+				RoleHolographicTertiaryColor,
+			)
+		}
+	}
+	return nil
+}
+
+func validateRoleColor(name string, color int) error {
+	if color < 0 || color > 0xFFFFFF {
+		return fmt.Errorf("%s value must be between 0 and 0xFFFFFF", name)
+	}
+	return nil
 }
 
 // GuildRoleReorder reoders guild roles
@@ -1290,22 +2005,19 @@ func (s *Session) GuildIntegrations(guildID string, options ...RequestOption) (s
 	return
 }
 
-// GuildIntegrationCreate creates a Guild Integration.
+// GuildIntegrationCreate formerly created a Guild Integration.
+//
+// Deprecated: Discord removed this public API operation.
 // guildID          : The ID of a Guild.
 // integrationType  : The Integration type.
 // integrationID    : The ID of an integration.
 func (s *Session) GuildIntegrationCreate(guildID, integrationType, integrationID string, options ...RequestOption) (err error) {
-
-	data := struct {
-		Type string `json:"type"`
-		ID   string `json:"id"`
-	}{integrationType, integrationID}
-
-	_, err = s.RequestWithBucketID("POST", EndpointGuildIntegrations(guildID), data, EndpointGuildIntegrations(guildID), options...)
-	return
+	return ErrGuildIntegrationMutationUnsupported
 }
 
-// GuildIntegrationEdit edits a Guild Integration.
+// GuildIntegrationEdit formerly edited a Guild Integration.
+//
+// Deprecated: Discord removed this public API operation.
 // guildID              : The ID of a Guild.
 // integrationType      : The Integration type.
 // integrationID        : The ID of an integration.
@@ -1313,15 +2025,7 @@ func (s *Session) GuildIntegrationCreate(guildID, integrationType, integrationID
 // expireGracePeriod    : Period (in seconds) where the integration will ignore lapsed subscriptions.
 // enableEmoticons	    : Whether emoticons should be synced for this integration (twitch only currently).
 func (s *Session) GuildIntegrationEdit(guildID, integrationID string, expireBehavior, expireGracePeriod int, enableEmoticons bool, options ...RequestOption) (err error) {
-
-	data := struct {
-		ExpireBehavior    int  `json:"expire_behavior"`
-		ExpireGracePeriod int  `json:"expire_grace_period"`
-		EnableEmoticons   bool `json:"enable_emoticons"`
-	}{expireBehavior, expireGracePeriod, enableEmoticons}
-
-	_, err = s.RequestWithBucketID("PATCH", EndpointGuildIntegration(guildID, integrationID), data, EndpointGuildIntegration(guildID, ""), options...)
-	return
+	return ErrGuildIntegrationMutationUnsupported
 }
 
 // GuildIntegrationDelete removes the given integration from the Guild.
@@ -1398,6 +2102,72 @@ func (s *Session) GuildEmbedEdit(guildID string, data *GuildEmbed, options ...Re
 	return
 }
 
+// GuildWidget returns the public widget for a Guild.
+func (s *Session) GuildWidget(guildID string, options ...RequestOption) (st *GuildWidget, err error) {
+	endpoint := EndpointGuildWidgetJSON(guildID)
+	body, err := s.RequestWithBucketID(http.MethodGet, endpoint, nil, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &st)
+	return
+}
+
+// GuildVanityURL returns the partial invite for a guild vanity URL.
+func (s *Session) GuildVanityURL(guildID string, options ...RequestOption) (st *GuildVanityURL, err error) {
+	endpoint := EndpointGuildVanityURL(guildID)
+	body, err := s.RequestWithBucketID(http.MethodGet, endpoint, nil, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &st)
+	return
+}
+
+// GuildWelcomeScreen returns the welcome screen for a Guild.
+func (s *Session) GuildWelcomeScreen(guildID string, options ...RequestOption) (st *GuildWelcomeScreen, err error) {
+	endpoint := EndpointGuildWelcomeScreen(guildID)
+	body, err := s.RequestWithBucketID(http.MethodGet, endpoint, nil, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &st)
+	return
+}
+
+// GuildWelcomeScreenEdit modifies a guild welcome screen.
+func (s *Session) GuildWelcomeScreenEdit(guildID string, data *GuildWelcomeScreenEditParams, options ...RequestOption) (st *GuildWelcomeScreen, err error) {
+	if data == nil {
+		return nil, fmt.Errorf("welcome screen parameters cannot be nil")
+	}
+	if data.WelcomeChannels != nil && *data.WelcomeChannels != nil && len(*data.WelcomeChannels) > 5 {
+		return nil, fmt.Errorf("welcome screen cannot contain more than 5 channels")
+	}
+
+	endpoint := EndpointGuildWelcomeScreen(guildID)
+	body, err := s.RequestWithBucketID(http.MethodPatch, endpoint, data, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &st)
+	return
+}
+
+// GuildIncidentActionsEdit modifies the incident actions for a Guild.
+func (s *Session) GuildIncidentActionsEdit(guildID string, data *GuildIncidentActionsEditParams, options ...RequestOption) (st *IncidentsData, err error) {
+	if data == nil {
+		return nil, fmt.Errorf("incident action parameters cannot be nil")
+	}
+
+	endpoint := EndpointGuildIncidentActions(guildID)
+	body, err := s.RequestWithBucketID(http.MethodPut, endpoint, data, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &st)
+	return
+}
+
 // GuildAuditLog returns the audit log for a Guild.
 // guildID     : The ID of a Guild.
 // userID      : If provided the log will be filtered for the given ID.
@@ -1405,21 +2175,46 @@ func (s *Session) GuildEmbedEdit(guildID string, data *GuildEmbed, options ...Re
 // actionType  : If provided the log will be filtered for the given Action Type.
 // limit       : The number messages that can be returned. (default 50, min 1, max 100)
 func (s *Session) GuildAuditLog(guildID, userID, beforeID string, actionType, limit int, options ...RequestOption) (st *GuildAuditLog, err error) {
+	return s.GuildAuditLogComplex(guildID, &GuildAuditLogParams{
+		UserID:     userID,
+		ActionType: AuditLogAction(actionType),
+		BeforeID:   beforeID,
+		Limit:      limit,
+	}, options...)
+}
+
+// GuildAuditLogComplex returns filtered and paginated audit log entries for a guild.
+func (s *Session) GuildAuditLogComplex(guildID string, params *GuildAuditLogParams, options ...RequestOption) (st *GuildAuditLog, err error) {
+	if params == nil {
+		params = &GuildAuditLogParams{}
+	}
+	if params.BeforeID != "" && params.AfterID != "" {
+		return nil, fmt.Errorf("audit log before and after parameters are mutually exclusive")
+	}
+	if params.Limit < 0 || params.Limit > 100 {
+		return nil, fmt.Errorf("audit log limit must be 0 or between 1 and 100")
+	}
+	if params.ActionType < 0 {
+		return nil, fmt.Errorf("audit log action type cannot be negative")
+	}
 
 	uri := EndpointGuildAuditLogs(guildID)
 
 	v := url.Values{}
-	if userID != "" {
-		v.Set("user_id", userID)
+	if params.UserID != "" {
+		v.Set("user_id", params.UserID)
 	}
-	if beforeID != "" {
-		v.Set("before", beforeID)
+	if params.BeforeID != "" {
+		v.Set("before", params.BeforeID)
 	}
-	if actionType > 0 {
-		v.Set("action_type", strconv.Itoa(actionType))
+	if params.AfterID != "" {
+		v.Set("after", params.AfterID)
 	}
-	if limit > 0 {
-		v.Set("limit", strconv.Itoa(limit))
+	if params.ActionType > 0 {
+		v.Set("action_type", strconv.Itoa(int(params.ActionType)))
+	}
+	if params.Limit > 0 {
+		v.Set("limit", strconv.Itoa(params.Limit))
 	}
 	if len(v) > 0 {
 		uri = fmt.Sprintf("%s?%s", uri, v.Encode())
@@ -1530,6 +2325,22 @@ func (s *Session) NitroStickerPacks(options ...RequestOption) (packs []*StickerP
 	return
 }
 
+// StickerPack returns the standard sticker pack with the given ID.
+func (s *Session) StickerPack(packID string, options ...RequestOption) (pack *StickerPack, err error) {
+	if strings.TrimSpace(packID) == "" {
+		return nil, fmt.Errorf("sticker pack ID cannot be empty")
+	}
+
+	endpoint := EndpointStickerPack(packID)
+	body, err := s.RequestWithBucketID(http.MethodGet, endpoint, nil, EndpointStickerPack(""), options...)
+	if err != nil {
+		return nil, err
+	}
+
+	err = unmarshal(body, &pack)
+	return
+}
+
 // GuildStickers returns all stickers for a guild.
 // guildID : The ID of a Guild.
 func (s *Session) GuildStickers(guildID string, options ...RequestOption) (stickers []*Sticker, err error) {
@@ -1564,7 +2375,7 @@ func (s *Session) GuildStickerCreate(guildID string, data *GuildStickerCreate, o
 		return nil, fmt.Errorf("data can not be nil")
 	}
 
-	contentType, body, encodeErr := MultipartBodyWithFieldsAndFile(map[string]string{
+	multipartBody, encodeErr := NewMultipartBodyWithFieldsAndFile(map[string]string{
 		"name":        data.Name,
 		"description": data.Description,
 		"tags":        data.Tags,
@@ -1573,7 +2384,15 @@ func (s *Session) GuildStickerCreate(guildID string, data *GuildStickerCreate, o
 		return nil, encodeErr
 	}
 
-	response, err := s.RequestRaw("POST", EndpointGuildStickers(guildID), contentType, body, EndpointGuildStickers(guildID), 0, options...)
+	response, err := s.RequestRawWithBody(
+		"POST",
+		EndpointGuildStickers(guildID),
+		multipartBody.ContentType(),
+		multipartBody.Open,
+		EndpointGuildStickers(guildID),
+		0,
+		options...,
+	)
 	if err != nil {
 		return
 	}
@@ -1674,6 +2493,20 @@ func (s *Session) ApplicationEmojiDelete(appID, emojiID string, options ...Reque
 	return
 }
 
+// ApplicationActivityInstance returns a serialized Activity instance.
+func (s *Session) ApplicationActivityInstance(appID, instanceID string, options ...RequestOption) (*ApplicationActivityInstance, error) {
+	endpoint := EndpointApplicationActivityInstance(appID, instanceID)
+	body, err := s.RequestWithBucketID("GET", endpoint, nil, EndpointApplicationActivityInstance(appID, ""), options...)
+	if err != nil {
+		return nil, err
+	}
+	instance := &ApplicationActivityInstance{}
+	if err = unmarshal(body, instance); err != nil {
+		return nil, err
+	}
+	return instance, nil
+}
+
 // GuildTemplate returns a GuildTemplate for the given code
 // templateCode: The Code of a GuildTemplate
 func (s *Session) GuildTemplate(templateCode string, options ...RequestOption) (st *GuildTemplate, err error) {
@@ -1687,24 +2520,14 @@ func (s *Session) GuildTemplate(templateCode string, options ...RequestOption) (
 	return
 }
 
-// GuildCreateWithTemplate creates a guild based on a GuildTemplate
+// GuildCreateWithTemplate formerly created a guild based on a GuildTemplate.
+//
+// Deprecated: Discord applications can no longer create guilds.
 // templateCode: The Code of a GuildTemplate
 // name: The name of the guild (2-100) characters
 // icon: base64 encoded 128x128 image for the guild icon
 func (s *Session) GuildCreateWithTemplate(templateCode, name, icon string, options ...RequestOption) (st *Guild, err error) {
-
-	data := struct {
-		Name string `json:"name"`
-		Icon string `json:"icon"`
-	}{name, icon}
-
-	body, err := s.RequestWithBucketID("POST", EndpointGuildTemplate(templateCode), data, EndpointGuildTemplate(templateCode), options...)
-	if err != nil {
-		return
-	}
-
-	err = unmarshal(body, &st)
-	return
+	return nil, ErrGuildCreateUnsupported
 }
 
 // GuildTemplates returns all of GuildTemplates
@@ -1723,14 +2546,16 @@ func (s *Session) GuildTemplates(guildID string, options ...RequestOption) (st [
 // GuildTemplateCreate creates a template for the guild
 // guildID : The ID of the guild
 // data    : Template metadata
-func (s *Session) GuildTemplateCreate(guildID string, data *GuildTemplateParams, options ...RequestOption) (st *GuildTemplate) {
+func (s *Session) GuildTemplateCreate(guildID string, data *GuildTemplateParams, options ...RequestOption) (st *GuildTemplate, err error) {
 	body, err := s.RequestWithBucketID("POST", EndpointGuildTemplates(guildID), data, EndpointGuildTemplates(guildID), options...)
 	if err != nil {
-		return
+		return nil, err
 	}
 
-	_ = unmarshal(body, &st)
-	return
+	if err = unmarshal(body, &st); err != nil {
+		return nil, err
+	}
+	return st, nil
 }
 
 // GuildTemplateSync syncs the template to the guild's current state
@@ -1794,6 +2619,20 @@ func (s *Session) ChannelEdit(channelID string, data *ChannelEdit, options ...Re
 	err = unmarshal(body, &st)
 	return
 
+}
+
+// ChannelVoiceStatusUpdate sets or clears a voice channel's status.
+// Pass nil to clear the status.
+func (s *Session) ChannelVoiceStatusUpdate(channelID string, status *string, options ...RequestOption) error {
+	if status != nil && utf8.RuneCountInString(*status) > 500 {
+		return fmt.Errorf("voice channel status must be at most 500 characters")
+	}
+	endpoint := EndpointChannelVoiceStatus(channelID)
+	data := struct {
+		Status *string `json:"status"`
+	}{Status: status}
+	_, err := s.RequestWithBucketID("PUT", endpoint, data, endpoint, options...)
+	return err
 }
 
 // ChannelEditComplex edits an existing channel, replacing the parameters entirely with ChannelEdit struct
@@ -1892,6 +2731,14 @@ var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
 // channelID : The ID of a Channel.
 // data      : The message struct to send.
 func (s *Session) ChannelMessageSendComplex(channelID string, data *MessageSend, options ...RequestOption) (st *Message, err error) {
+	if data == nil {
+		return nil, fmt.Errorf("message data must not be nil")
+	}
+	data.AllowedMentions, err = s.resolveAllowedMentions(data.AllowedMentions)
+	if err != nil {
+		return nil, err
+	}
+
 	// TODO: Remove this when compatibility is not required.
 	if data.Embed != nil {
 		if data.Embeds == nil {
@@ -1929,11 +2776,11 @@ func (s *Session) ChannelMessageSendComplex(channelID string, data *MessageSend,
 
 	var response []byte
 	if len(files) > 0 {
-		contentType, body, encodeErr := MultipartBodyWithJSON(data, files)
+		multipartBody, encodeErr := NewMultipartBodyWithJSON(data, files)
 		if encodeErr != nil {
 			return st, encodeErr
 		}
-		response, err = s.RequestRaw("POST", endpoint, contentType, body, endpoint, 0, options...)
+		response, err = s.RequestRawWithBody("POST", endpoint, multipartBody.ContentType(), multipartBody.Open, endpoint, 0, options...)
 	} else {
 		response, err = s.RequestWithBucketID("POST", endpoint, data, endpoint, options...)
 	}
@@ -2019,6 +2866,14 @@ func (s *Session) ChannelMessageEdit(channelID, messageID, content string, optio
 // ChannelMessageEditComplex edits an existing message, replacing it entirely with
 // the given MessageEdit struct
 func (s *Session) ChannelMessageEditComplex(m *MessageEdit, options ...RequestOption) (st *Message, err error) {
+	if m == nil {
+		return nil, fmt.Errorf("message edit data must not be nil")
+	}
+	m.AllowedMentions, err = s.resolveAllowedMentions(m.AllowedMentions)
+	if err != nil {
+		return nil, err
+	}
+
 	// TODO: Remove this when compatibility is not required.
 	if m.Embed != nil {
 		if m.Embeds == nil {
@@ -2041,11 +2896,19 @@ func (s *Session) ChannelMessageEditComplex(m *MessageEdit, options ...RequestOp
 
 	var response []byte
 	if len(m.Files) > 0 {
-		contentType, body, encodeErr := MultipartBodyWithJSON(m, m.Files)
+		multipartBody, encodeErr := NewMultipartBodyWithJSON(m, m.Files)
 		if encodeErr != nil {
 			return st, encodeErr
 		}
-		response, err = s.RequestRaw("PATCH", endpoint, contentType, body, EndpointChannelMessage(m.Channel, ""), 0, options...)
+		response, err = s.RequestRawWithBody(
+			"PATCH",
+			endpoint,
+			multipartBody.ContentType(),
+			multipartBody.Open,
+			EndpointChannelMessage(m.Channel, ""),
+			0,
+			options...,
+		)
 	} else {
 		response, err = s.RequestWithBucketID("PATCH", endpoint, m, EndpointChannelMessage(m.Channel, ""), options...)
 	}
@@ -2113,7 +2976,7 @@ func (s *Session) ChannelMessagesBulkDelete(channelID string, messages []string,
 // messageID: The ID of a message.
 func (s *Session) ChannelMessagePin(channelID, messageID string, options ...RequestOption) (err error) {
 
-	_, err = s.RequestWithBucketID("PUT", EndpointChannelMessagePin(channelID, messageID), nil, EndpointChannelMessagePin(channelID, ""), options...)
+	_, err = s.RequestWithBucketID("PUT", EndpointChannelMessagePin(channelID, messageID), nil, EndpointChannelMessagesPins(channelID), options...)
 	return
 }
 
@@ -2122,16 +2985,47 @@ func (s *Session) ChannelMessagePin(channelID, messageID string, options ...Requ
 // messageID: The ID of a message.
 func (s *Session) ChannelMessageUnpin(channelID, messageID string, options ...RequestOption) (err error) {
 
-	_, err = s.RequestWithBucketID("DELETE", EndpointChannelMessagePin(channelID, messageID), nil, EndpointChannelMessagePin(channelID, ""), options...)
+	_, err = s.RequestWithBucketID("DELETE", EndpointChannelMessagePin(channelID, messageID), nil, EndpointChannelMessagesPins(channelID), options...)
 	return
 }
 
-// ChannelMessagesPinned returns an array of Message structures for pinned messages
-// within a given channel
+// ChannelMessagesPins returns one page of pinned messages within a channel.
+// before : If specified, returns only messages pinned before the timestamp.
+// limit  : Optional maximum number of pins to return (1-50).
+func (s *Session) ChannelMessagesPins(channelID string, before *time.Time, limit int, options ...RequestOption) (pins *ChannelPins, err error) {
+	endpoint := EndpointChannelMessagesPins(channelID)
+	query := url.Values{}
+	if before != nil {
+		query.Set("before", before.Format(time.RFC3339))
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+
+	requestURL := endpoint
+	if len(query) > 0 {
+		requestURL += "?" + query.Encode()
+	}
+	body, err := s.RequestWithBucketID("GET", requestURL, nil, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+
+	pins = &ChannelPins{}
+	if err = unmarshal(body, pins); err != nil {
+		return nil, err
+	}
+	return pins, nil
+}
+
+// ChannelMessagesPinned returns the first 50 pinned messages in a channel.
+//
+// Deprecated: use ChannelMessagesPins, which supports current pagination.
 // channelID : The ID of a Channel.
 func (s *Session) ChannelMessagesPinned(channelID string, options ...RequestOption) (st []*Message, err error) {
 
-	body, err := s.RequestWithBucketID("GET", EndpointChannelMessagesPins(channelID), nil, EndpointChannelMessagesPins(channelID), options...)
+	endpoint := EndpointChannelMessagesPinsDeprecated(channelID)
+	body, err := s.RequestWithBucketID("GET", endpoint, nil, endpoint, options...)
 
 	if err != nil {
 		return
@@ -2190,6 +3084,53 @@ func (s *Session) ChannelInviteCreate(channelID string, i Invite, options ...Req
 	}
 
 	err = unmarshal(body, &st)
+	return
+}
+
+// GroupDMAddRecipient adds a user to a group DM. The access token must belong
+// to the recipient and have the gdm.join OAuth2 scope.
+func (s *Session) GroupDMAddRecipient(channelID, userID string, data *GroupDMAddRecipientParams, options ...RequestOption) (err error) {
+	if strings.TrimSpace(channelID) == "" {
+		return fmt.Errorf("group DM channel ID cannot be empty")
+	}
+	if strings.TrimSpace(userID) == "" {
+		return fmt.Errorf("group DM recipient user ID cannot be empty")
+	}
+	if data == nil {
+		return fmt.Errorf("group DM recipient parameters cannot be nil")
+	}
+	if strings.TrimSpace(data.AccessToken) == "" {
+		return fmt.Errorf("group DM recipient access token cannot be empty")
+	}
+
+	endpoint := EndpointChannelRecipient(channelID, userID)
+	_, err = s.RequestWithBucketID(
+		http.MethodPut,
+		endpoint,
+		data,
+		EndpointChannelRecipient(channelID, ""),
+		options...,
+	)
+	return
+}
+
+// GroupDMRemoveRecipient removes a user from a group DM.
+func (s *Session) GroupDMRemoveRecipient(channelID, userID string, options ...RequestOption) (err error) {
+	if strings.TrimSpace(channelID) == "" {
+		return fmt.Errorf("group DM channel ID cannot be empty")
+	}
+	if strings.TrimSpace(userID) == "" {
+		return fmt.Errorf("group DM recipient user ID cannot be empty")
+	}
+
+	endpoint := EndpointChannelRecipient(channelID, userID)
+	_, err = s.RequestWithBucketID(
+		http.MethodDelete,
+		endpoint,
+		nil,
+		EndpointChannelRecipient(channelID, ""),
+		options...,
+	)
 	return
 }
 
@@ -2328,22 +3269,134 @@ func (s *Session) InviteDelete(inviteID string, options ...RequestOption) (st *I
 	return
 }
 
-// InviteAccept accepts an Invite to a Guild or Channel
-// inviteID : The invite code
-func (s *Session) InviteAccept(inviteID string, options ...RequestOption) (st *Invite, err error) {
-
-	body, err := s.RequestWithBucketID("POST", EndpointInvite(inviteID), nil, EndpointInvite(""), options...)
-	if err != nil {
-		return
+// InviteTargetUsers returns the target-users CSV file for an invite.
+func (s *Session) InviteTargetUsers(inviteID string, options ...RequestOption) ([]byte, error) {
+	if strings.TrimSpace(inviteID) == "" {
+		return nil, fmt.Errorf("invite code cannot be empty")
 	}
 
-	err = unmarshal(body, &st)
+	endpoint := EndpointInviteTargetUsers(inviteID)
+	return s.RequestWithBucketID(http.MethodGet, endpoint, nil, EndpointInviteTargetUsers(""), options...)
+}
+
+// InviteTargetUsersUpdate uploads a target-users CSV file for an invite.
+func (s *Session) InviteTargetUsersUpdate(inviteID string, file *File, options ...RequestOption) error {
+	if strings.TrimSpace(inviteID) == "" {
+		return fmt.Errorf("invite code cannot be empty")
+	}
+	if file == nil {
+		return fmt.Errorf("target users file cannot be nil")
+	}
+	if strings.TrimSpace(file.Name) == "" {
+		return fmt.Errorf("target users file name cannot be empty")
+	}
+
+	upload := *file
+	if upload.ContentType == "" {
+		upload.ContentType = "text/csv"
+	}
+	multipartBody, err := NewMultipartBodyWithFieldsAndFile(nil, "target_users_file", &upload)
+	if err != nil {
+		return err
+	}
+
+	endpoint := EndpointInviteTargetUsers(inviteID)
+	_, err = s.RequestRawWithBody(
+		http.MethodPut,
+		endpoint,
+		multipartBody.ContentType(),
+		multipartBody.Open,
+		EndpointInviteTargetUsers(""),
+		0,
+		options...,
+	)
+	return err
+}
+
+// InviteTargetUsersJobStatus returns the asynchronous target-users processing
+// status for an invite.
+func (s *Session) InviteTargetUsersJobStatus(inviteID string, options ...RequestOption) (job *InviteTargetUsersJob, err error) {
+	if strings.TrimSpace(inviteID) == "" {
+		return nil, fmt.Errorf("invite code cannot be empty")
+	}
+
+	endpoint := EndpointInviteTargetUsersJobStatus(inviteID)
+	body, err := s.RequestWithBucketID(
+		http.MethodGet,
+		endpoint,
+		nil,
+		EndpointInviteTargetUsersJobStatus(""),
+		options...,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	err = unmarshal(body, &job)
 	return
+}
+
+// InviteAccept is retained for source compatibility, but Discord does not
+// expose invite acceptance through its public bot API.
+//
+// Deprecated: install bots through Discord's OAuth2 authorization flow.
+func (s *Session) InviteAccept(inviteID string, options ...RequestOption) (st *Invite, err error) {
+	return nil, ErrInviteAcceptUnsupported
 }
 
 // ------------------------------------------------------------------------------------------------
 // Functions specific to Discord Voice
 // ------------------------------------------------------------------------------------------------
+
+// CurrentUserVoiceState returns the current user's voice state in a guild.
+func (s *Session) CurrentUserVoiceState(guildID string, options ...RequestOption) (*VoiceState, error) {
+	return s.UserVoiceState(guildID, "@me", options...)
+}
+
+// UserVoiceState returns a user's voice state in a guild.
+func (s *Session) UserVoiceState(guildID, userID string, options ...RequestOption) (st *VoiceState, err error) {
+	endpoint := EndpointGuildVoiceState(guildID, userID)
+	body, err := s.RequestWithBucketID(http.MethodGet, endpoint, nil, EndpointGuildVoiceState(guildID, ""), options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &st)
+	return
+}
+
+// CurrentUserVoiceStateEdit modifies the current user's voice state in a guild.
+func (s *Session) CurrentUserVoiceStateEdit(guildID string, data *CurrentUserVoiceStateEditParams, options ...RequestOption) error {
+	if data == nil {
+		return fmt.Errorf("current user voice state parameters cannot be nil")
+	}
+	return s.userVoiceStateEdit(guildID, "@me", data, options...)
+}
+
+// UserVoiceStateEdit modifies another user's voice state in a guild.
+func (s *Session) UserVoiceStateEdit(guildID, userID string, data *UserVoiceStateEditParams, options ...RequestOption) error {
+	if data == nil {
+		return fmt.Errorf("user voice state parameters cannot be nil")
+	}
+	return s.userVoiceStateEdit(guildID, userID, data, options...)
+}
+
+func (s *Session) userVoiceStateEdit(guildID, userID string, data interface{}, options ...RequestOption) error {
+	endpoint := EndpointGuildVoiceState(guildID, userID)
+	_, err := s.RequestWithBucketID(http.MethodPatch, endpoint, data, EndpointGuildVoiceState(guildID, ""), options...)
+	return err
+}
+
+// GuildVoiceRegions returns the voice regions available to a guild, including
+// VIP regions when the guild is VIP-enabled.
+func (s *Session) GuildVoiceRegions(guildID string, options ...RequestOption) (st []*VoiceRegion, err error) {
+	endpoint := EndpointGuildVoiceRegions(guildID)
+	body, err := s.RequestWithBucketID(http.MethodGet, endpoint, nil, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &st)
+	return
+}
 
 // VoiceRegions returns the voice server regions
 func (s *Session) VoiceRegions(options ...RequestOption) (st []*VoiceRegion, err error) {
@@ -2561,6 +3614,14 @@ func (s *Session) WebhookDeleteWithToken(webhookID, token string, options ...Req
 }
 
 func (s *Session) webhookExecute(webhookID, token string, wait bool, threadID string, data *WebhookParams, options ...RequestOption) (st *Message, err error) {
+	if data == nil {
+		return nil, fmt.Errorf("webhook data must not be nil")
+	}
+	data.AllowedMentions, err = s.resolveAllowedMentions(data.AllowedMentions)
+	if err != nil {
+		return nil, err
+	}
+
 	uri := EndpointWebhookToken(webhookID, token)
 
 	v := url.Values{}
@@ -2577,12 +3638,12 @@ func (s *Session) webhookExecute(webhookID, token string, wait bool, threadID st
 
 	var response []byte
 	if len(data.Files) > 0 {
-		contentType, body, encodeErr := MultipartBodyWithJSON(data, data.Files)
+		multipartBody, encodeErr := NewMultipartBodyWithJSON(data, data.Files)
 		if encodeErr != nil {
 			return st, encodeErr
 		}
 
-		response, err = s.RequestRaw("POST", uri, contentType, body, uri, 0, options...)
+		response, err = s.RequestRawWithBody("POST", uri, multipartBody.ContentType(), multipartBody.Open, uri, 0, options...)
 	} else {
 		response, err = s.RequestWithBucketID("POST", uri, data, uri, options...)
 	}
@@ -2633,16 +3694,24 @@ func (s *Session) WebhookMessage(webhookID, token, messageID string, options ...
 // token     : The auth token for the webhook
 // messageID : The ID of message to edit
 func (s *Session) WebhookMessageEdit(webhookID, token, messageID string, data *WebhookEdit, options ...RequestOption) (st *Message, err error) {
+	if data == nil {
+		return nil, fmt.Errorf("webhook edit data must not be nil")
+	}
+	data.AllowedMentions, err = s.resolveAllowedMentions(data.AllowedMentions)
+	if err != nil {
+		return nil, err
+	}
+
 	uri := EndpointWebhookMessage(webhookID, token, messageID)
 
 	var response []byte
 	if len(data.Files) > 0 {
-		contentType, body, err := MultipartBodyWithJSON(data, data.Files)
+		multipartBody, err := NewMultipartBodyWithJSON(data, data.Files)
 		if err != nil {
 			return nil, err
 		}
 
-		response, err = s.RequestRaw("PATCH", uri, contentType, body, uri, 0, options...)
+		response, err = s.RequestRawWithBody("PATCH", uri, multipartBody.ContentType(), multipartBody.Open, uri, 0, options...)
 		if err != nil {
 			return nil, err
 		}
@@ -2727,26 +3796,44 @@ func (s *Session) MessageReactionsRemoveEmoji(channelID, messageID, emojiID stri
 // beforeID  : If provided all reactions returned will be before given ID.
 // afterID   : If provided all reactions returned will be after given ID.
 func (s *Session) MessageReactions(channelID, messageID, emojiID string, limit int, beforeID, afterID string, options ...RequestOption) (st []*User, err error) {
+	return s.MessageReactionsComplex(channelID, messageID, emojiID, &MessageReactionsParams{
+		Type:     ReactionTypeNormal,
+		Limit:    limit,
+		BeforeID: beforeID,
+		AfterID:  afterID,
+	}, options...)
+}
+
+// MessageReactionsComplex gets users who reacted with a specific normal or burst reaction.
+func (s *Session) MessageReactionsComplex(channelID, messageID, emojiID string, params *MessageReactionsParams, options ...RequestOption) (st []*User, err error) {
 	// emoji such as  #⃣ need to have # escaped
 	emojiID = strings.Replace(emojiID, "#", "%23", -1)
 	uri := EndpointMessageReactions(channelID, messageID, emojiID)
 
 	v := url.Values{}
-
-	if limit > 0 {
-		v.Set("limit", strconv.Itoa(limit))
+	if params == nil {
+		params = &MessageReactionsParams{}
+	}
+	if params.Type != ReactionTypeNormal && params.Type != ReactionTypeBurst {
+		return nil, fmt.Errorf("reaction type must be ReactionTypeNormal or ReactionTypeBurst")
+	}
+	if params.Limit < 0 || params.Limit > 100 {
+		return nil, fmt.Errorf("reaction limit must be 0 or between 1 and 100")
 	}
 
-	if afterID != "" {
-		v.Set("after", afterID)
-	}
-	if beforeID != "" {
-		v.Set("before", beforeID)
+	v.Set("type", strconv.Itoa(int(params.Type)))
+	if params.Limit > 0 {
+		v.Set("limit", strconv.Itoa(params.Limit))
 	}
 
-	if len(v) > 0 {
-		uri += "?" + v.Encode()
+	if params.AfterID != "" {
+		v.Set("after", params.AfterID)
 	}
+	if params.BeforeID != "" {
+		v.Set("before", params.BeforeID)
+	}
+
+	uri += "?" + v.Encode()
 
 	body, err := s.RequestWithBucketID("GET", uri, nil, EndpointMessageReaction(channelID, "", "", ""), options...)
 	if err != nil {
@@ -2821,6 +3908,14 @@ func (s *Session) ThreadStart(channelID, name string, typ ChannelType, archiveDu
 // threadData  : Parameters of the thread.
 // messageData : Parameters of the starting message.
 func (s *Session) ForumThreadStartComplex(channelID string, threadData *ThreadStart, messageData *MessageSend, options ...RequestOption) (th *Channel, err error) {
+	if threadData == nil || messageData == nil {
+		return nil, fmt.Errorf("thread and message data must not be nil")
+	}
+	messageData.AllowedMentions, err = s.resolveAllowedMentions(messageData.AllowedMentions)
+	if err != nil {
+		return nil, err
+	}
+
 	endpoint := EndpointChannelThreads(channelID)
 
 	// TODO: Remove this when compatibility is not required.
@@ -2857,12 +3952,12 @@ func (s *Session) ForumThreadStartComplex(channelID string, threadData *ThreadSt
 
 	var response []byte
 	if len(files) > 0 {
-		contentType, body, encodeErr := MultipartBodyWithJSON(data, files)
+		multipartBody, encodeErr := NewMultipartBodyWithJSON(data, files)
 		if encodeErr != nil {
 			return th, encodeErr
 		}
 
-		response, err = s.RequestRaw("POST", endpoint, contentType, body, endpoint, 0, options...)
+		response, err = s.RequestRawWithBody("POST", endpoint, multipartBody.ContentType(), multipartBody.Open, endpoint, 0, options...)
 	} else {
 		response, err = s.RequestWithBucketID("POST", endpoint, data, endpoint, options...)
 	}
@@ -2996,16 +4091,11 @@ func (s *Session) ThreadMembers(threadID string, limit int, withMember bool, aft
 	return
 }
 
-// ThreadsActive returns all active threads for specified channel.
+// ThreadsActive formerly returned active threads for a channel.
+//
+// Deprecated: the API v10 channel route was removed; use GuildThreadsActive.
 func (s *Session) ThreadsActive(channelID string, options ...RequestOption) (threads *ThreadsList, err error) {
-	var body []byte
-	body, err = s.RequestWithBucketID("GET", EndpointChannelActiveThreads(channelID), nil, EndpointChannelActiveThreads(channelID), options...)
-	if err != nil {
-		return
-	}
-
-	err = unmarshal(body, &threads)
-	return
+	return nil, ErrChannelActiveThreadsUnsupported
 }
 
 // GuildThreadsActive returns all active threads for specified guild.
@@ -3078,11 +4168,11 @@ func (s *Session) ThreadsPrivateArchived(channelID string, before *time.Time, li
 // ThreadsPrivateJoinedArchived returns archived joined private threads for specified channel.
 // before : If specified returns only threads before the timestamp
 // limit  : Optional maximum amount of threads to return.
-func (s *Session) ThreadsPrivateJoinedArchived(channelID string, before *time.Time, limit int, options ...RequestOption) (threads *ThreadsList, err error) {
+func (s *Session) ThreadsPrivateJoinedArchived(channelID string, before string, limit int, options ...RequestOption) (threads *ThreadsList, err error) {
 	endpoint := EndpointChannelJoinedPrivateArchivedThreads(channelID)
 	v := url.Values{}
-	if before != nil {
-		v.Set("before", before.Format(time.RFC3339))
+	if before != "" {
+		v.Set("before", before)
 	}
 
 	if limit > 0 {
@@ -3267,32 +4357,45 @@ func (s *Session) ApplicationCommandPermissionsEdit(appID, guildID, cmdID string
 	return
 }
 
-// ApplicationCommandPermissionsBatchEdit edits the permissions of a batch of commands
+// ApplicationCommandPermissionsBatchEdit formerly edited permissions in a batch.
 // appID       : The Application ID
 // guildID     : The guild ID to batch edit commands of
 // permissions : A list of permissions paired with a command ID, guild ID, and application ID per application command
 //
-// NOTE: This endpoint has been disabled with updates to command permissions (Permissions v2). Please use ApplicationCommandPermissionsEdit instead.
+// Deprecated: this endpoint is disabled; use ApplicationCommandPermissionsEdit.
 func (s *Session) ApplicationCommandPermissionsBatchEdit(appID, guildID string, permissions []*GuildApplicationCommandPermissions, options ...RequestOption) (err error) {
-	endpoint := EndpointApplicationCommandsGuildPermissions(appID, guildID)
-
-	_, err = s.RequestWithBucketID("PUT", endpoint, permissions, endpoint, options...)
-	return
+	return ErrCommandPermissionsBatchUnsupported
 }
 
 // InteractionRespond creates the response to an interaction.
 // interaction : Interaction instance.
 // resp        : Response message data.
 func (s *Session) InteractionRespond(interaction *Interaction, resp *InteractionResponse, options ...RequestOption) error {
+	if interaction == nil || resp == nil {
+		return fmt.Errorf("interaction and response must not be nil")
+	}
+	if resp.Data != nil {
+		if resp.Type == InteractionResponseModal {
+			if err := ValidateModal(resp.Data.CustomID, resp.Data.Title, resp.Data.Components); err != nil {
+				return err
+			}
+		}
+		allowedMentions, err := s.resolveAllowedMentions(resp.Data.AllowedMentions)
+		if err != nil {
+			return err
+		}
+		resp.Data.AllowedMentions = allowedMentions
+	}
+
 	endpoint := EndpointInteractionResponse(interaction.ID, interaction.Token)
 
 	if resp.Data != nil && len(resp.Data.Files) > 0 {
-		contentType, body, err := MultipartBodyWithJSON(resp, resp.Data.Files)
+		multipartBody, err := NewMultipartBodyWithJSON(resp, resp.Data.Files)
 		if err != nil {
 			return err
 		}
 
-		_, err = s.RequestRaw("POST", endpoint, contentType, body, endpoint, 0, options...)
+		_, err = s.RequestRawWithBody("POST", endpoint, multipartBody.ContentType(), multipartBody.Open, endpoint, 0, options...)
 		return err
 	}
 
@@ -3323,12 +4426,23 @@ func (s *Session) InteractionResponseDelete(interaction *Interaction, options ..
 	return err
 }
 
-// FollowupMessageCreate creates the followup message for an interaction.
-// interaction : Interaction instance.
-// wait        : Waits for server confirmation of message send and ensures that the return struct is populated (it is nil otherwise)
-// data        : Data of the message to send.
-func (s *Session) FollowupMessageCreate(interaction *Interaction, wait bool, data *WebhookParams, options ...RequestOption) (*Message, error) {
-	return s.WebhookExecute(interaction.AppID, interaction.Token, wait, data, options...)
+// FollowupMessageCreate creates a followup message for an interaction.
+// Discord always waits for interaction followups, so wait is ignored and the
+// returned Message is always decoded.
+//
+// Deprecated: use FollowupMessageCreateComplex, which omits the inapplicable
+// wait parameter.
+func (s *Session) FollowupMessageCreate(interaction *Interaction, _ bool, data *WebhookParams, options ...RequestOption) (*Message, error) {
+	return s.FollowupMessageCreateComplex(interaction, data, options...)
+}
+
+// FollowupMessageCreateComplex creates a followup message and returns Discord's
+// message object. Interaction followup endpoints always behave as wait=true.
+func (s *Session) FollowupMessageCreateComplex(interaction *Interaction, data *WebhookParams, options ...RequestOption) (*Message, error) {
+	if interaction == nil {
+		return nil, fmt.Errorf("interaction must not be nil")
+	}
+	return s.WebhookExecute(interaction.AppID, interaction.Token, true, data, options...)
 }
 
 // FollowupMessageEdit edits a followup message of an interaction.
@@ -3753,11 +4867,11 @@ func (s *Session) Entitlements(appID string, filterOptions *EntitlementFilterOpt
 		if len(filterOptions.SkuIDs) > 0 {
 			queryParams.Set("sku_ids", strings.Join(filterOptions.SkuIDs, ","))
 		}
-		if filterOptions.Before != nil {
-			queryParams.Set("before", filterOptions.Before.Format(time.RFC3339))
+		if filterOptions.Before != "" {
+			queryParams.Set("before", filterOptions.Before)
 		}
-		if filterOptions.After != nil {
-			queryParams.Set("after", filterOptions.After.Format(time.RFC3339))
+		if filterOptions.After != "" {
+			queryParams.Set("after", filterOptions.After)
 		}
 		if filterOptions.Limit > 0 {
 			queryParams.Set("limit", strconv.Itoa(filterOptions.Limit))
@@ -3767,6 +4881,9 @@ func (s *Session) Entitlements(appID string, filterOptions *EntitlementFilterOpt
 		}
 		if filterOptions.ExcludeEnded {
 			queryParams.Set("exclude_ended", "true")
+		}
+		if filterOptions.ExcludeDeleted {
+			queryParams.Set("exclude_deleted", "true")
 		}
 	}
 
@@ -3785,13 +4902,28 @@ func (s *Session) EntitlementConsume(appID, entitlementID string, options ...Req
 	return
 }
 
+// Entitlement returns an entitlement for the given application.
+func (s *Session) Entitlement(appID, entitlementID string, options ...RequestOption) (entitlement *Entitlement, err error) {
+	endpoint := EndpointEntitlement(appID, entitlementID)
+	body, err := s.RequestWithBucketID("GET", endpoint, nil, EndpointEntitlement(appID, ""), options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &entitlement)
+	return entitlement, err
+}
+
 // EntitlementTestCreate creates a test entitlement to a given SKU for a given guild or user.
 // Discord will act as though that user or guild has entitlement to your premium offering.
-func (s *Session) EntitlementTestCreate(appID string, data *EntitlementTest, options ...RequestOption) (err error) {
+func (s *Session) EntitlementTestCreate(appID string, data *EntitlementTest, options ...RequestOption) (entitlement *Entitlement, err error) {
 	endpoint := EndpointEntitlements(appID)
 
-	_, err = s.RequestWithBucketID("POST", endpoint, data, endpoint, options...)
-	return
+	body, err := s.RequestWithBucketID("POST", endpoint, data, endpoint, options...)
+	if err != nil {
+		return nil, err
+	}
+	err = unmarshal(body, &entitlement)
+	return entitlement, err
 }
 
 // EntitlementTestDelete deletes a currently-active test entitlement. Discord will act as though
@@ -3804,18 +4936,18 @@ func (s *Session) EntitlementTestDelete(appID, entitlementID string, options ...
 // Subscriptions returns all subscriptions containing the SKU.
 // skuID : The ID of the SKU.
 // userID : User ID for which to return subscriptions. Required except for OAuth queries.
-// before : Optional timestamp to retrieve subscriptions before this time.
-// after : Optional timestamp to retrieve subscriptions after this time.
+// before : Optional subscription snowflake ID to retrieve subscriptions before.
+// after : Optional subscription snowflake ID to retrieve subscriptions after.
 // limit : Optional maximum number of subscriptions to return (1-100, default 50).
-func (s *Session) Subscriptions(skuID string, userID string, before, after *time.Time, limit int, options ...RequestOption) (subscriptions []*Subscription, err error) {
+func (s *Session) Subscriptions(skuID string, userID string, before, after string, limit int, options ...RequestOption) (subscriptions []*Subscription, err error) {
 	endpoint := EndpointSubscriptions(skuID)
 
 	queryParams := url.Values{}
-	if before != nil {
-		queryParams.Set("before", before.Format(time.RFC3339))
+	if before != "" {
+		queryParams.Set("before", before)
 	}
-	if after != nil {
-		queryParams.Set("after", after.Format(time.RFC3339))
+	if after != "" {
+		queryParams.Set("after", after)
 	}
 	if userID != "" {
 		queryParams.Set("user_id", userID)

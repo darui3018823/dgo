@@ -1,17 +1,17 @@
-<img align="right" alt="DiscordGo logo" src="/docs/img/discordgo.svg" width="200">
+<img align="right" alt="dgo project mark" src="../../docs/img/dgo.svg" width="200">
 
-## DiscordGo Scheduled Events Example
+## dgo scheduled events example
 
-This example demonstrates how to utilize DiscordGo to manage scheduled events
+This example demonstrates how to use dgo to manage scheduled events
 in a guild.
 
-**Join [Discord Gophers](https://discord.gg/0f1SbxBZjYoCtNPP)
-Discord chat channel for support.**
+For dgo-specific problems, use [GitHub Issues](https://github.com/darui3018823/dgo/issues).
+For general Go discussion, visit [Discord Gophers](https://discord.gg/golang).
 
 ### Build
 
 This assumes you already have a working Go environment setup and that
-DiscordGo is correctly installed on your system.
+Go 1.26.5 or newer and the module dependencies are available.
 
 From within the scheduled_events example folder, run the below command to compile the
 example.
@@ -23,7 +23,8 @@ go build
 ### Usage
 
 ```
-Usage of scheduled_events:
+./scheduled_events --help
+Usage of ./scheduled_events:
   -guild string
     	Test guild ID
   -token string
@@ -35,5 +36,5 @@ Usage of scheduled_events:
 The below example shows how to start the bot from the scheduled_events example folder.
 
 ```sh
-./scheduled_events -guild YOUR_TESTING_GUILD -token YOUR_BOT_TOKEN -voice YOUR_TESTING_CHANNEL
+./scheduled_events -guild YOUR_TESTING_GUILD_ID -token YOUR_BOT_TOKEN -voice YOUR_VOICE_CHANNEL_ID
 ```

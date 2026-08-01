@@ -64,17 +64,31 @@ func encodeULEB128(value uint32) []byte {
 	return result
 }
 
-func decodeULEB128(data []byte) (uint32, int) {
-	var result uint32
-	var shift uint
-	for i, b := range data {
-		result |= uint32(b&0x7F) << shift
-		if b&0x80 == 0 {
-			return result, i + 1
-		}
-		shift += 7
+func decodeULEB128(data []byte) (uint32, int, error) {
+	if len(data) == 0 {
+		return 0, 0, fmt.Errorf("empty ULEB128 value")
 	}
-	return result, len(data)
+
+	var result uint32
+	for i, b := range data {
+		if i >= 5 {
+			return 0, 0, fmt.Errorf("ULEB128 value exceeds 5 bytes")
+		}
+
+		value := uint32(b & 0x7F)
+		if i == 4 && value > 0x0F {
+			return 0, 0, fmt.Errorf("ULEB128 value overflows uint32")
+		}
+		result |= value << (7 * i)
+
+		if b&0x80 == 0 {
+			if i > 0 && value == 0 {
+				return 0, 0, fmt.Errorf("non-canonical ULEB128 value")
+			}
+			return result, i + 1, nil
+		}
+	}
+	return 0, 0, fmt.Errorf("unterminated ULEB128 value")
 }
 
 func parseSecureFrame(data []byte) (ciphertext, truncatedTag []byte, nonce uint32, err error) {
@@ -99,7 +113,16 @@ func parseSecureFrame(data []byte) (ciphertext, truncatedTag []byte, nonce uint3
 	ciphertext = data[:supplementalStart]
 
 	nonceBytes := data[supplementalStart+daveTagSize : len(data)-3]
-	nonce, _ = decodeULEB128(nonceBytes)
+	var consumed int
+	nonce, consumed, err = decodeULEB128(nonceBytes)
+	if err != nil {
+		err = fmt.Errorf("invalid DAVE nonce: %w", err)
+		return
+	}
+	if consumed != len(nonceBytes) {
+		err = fmt.Errorf("invalid DAVE nonce: %d trailing bytes", len(nonceBytes)-consumed)
+		return
+	}
 
 	truncatedTag = data[supplementalStart : supplementalStart+daveTagSize]
 

@@ -1,15 +1,21 @@
 package dgo
 
 import (
+	"bytes"
+	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestSessionLog_NoDeadlockUnderWriteLock(t *testing.T) {
 	s := &Session{}
-	s.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	var logs bytes.Buffer
+	s.SetLogger(slog.New(slog.NewTextHandler(&logs, nil)))
 
 	done := make(chan struct{})
 	go func() {
@@ -24,4 +30,166 @@ func TestSessionLog_NoDeadlockUnderWriteLock(t *testing.T) {
 	case <-time.After(1 * time.Second):
 		t.Fatal("Session.log deadlocked while session write lock was held")
 	}
+	if !strings.Contains(logs.String(), "locked log call") {
+		t.Fatalf("log entry was dropped while session lock was held: %q", logs.String())
+	}
+}
+
+func TestSessionLoggerCanBeReplacedConcurrently(t *testing.T) {
+	s := &Session{}
+	s.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 100; i++ {
+			s.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
+		}
+	}()
+	for i := 0; i < 100; i++ {
+		s.log(LogInformational, "message %d", i)
+	}
+	<-done
+}
+
+func TestSanitizeURLRedactsPathAndQueryCredentials(t *testing.T) {
+	tests := []string{
+		"https://discord.com/api/v10/webhooks/123/webhook-secret/messages/1?wait=true",
+		"https://discord.com/api/v10/interactions/123/interaction-secret/callback",
+		"https://example.com/callback?access_token=query-secret",
+	}
+	for _, rawURL := range tests {
+		sanitized := sanitizeURL(rawURL)
+		for _, secret := range []string{"webhook-secret", "interaction-secret", "query-secret"} {
+			if strings.Contains(sanitized, secret) {
+				t.Fatalf("sanitizeURL(%q) leaked %q in %q", rawURL, secret, sanitized)
+			}
+		}
+		if !strings.Contains(sanitized, "REDACTED") {
+			t.Fatalf("sanitizeURL(%q) = %q, want redaction marker", rawURL, sanitized)
+		}
+	}
+}
+
+func TestRedactJSONRedactsNestedCredentials(t *testing.T) {
+	payload := []byte(`{"token":"bot-secret","nested":{"secret_key":[1,2,3],"session_id":"voice-session"},"url":"https://discord.com/api/v10/webhooks/1/webhook-secret"}`)
+	redacted := redactJSON(payload)
+
+	for _, secret := range []string{"bot-secret", "voice-session", "webhook-secret", "[1,2,3]"} {
+		if strings.Contains(redacted, secret) {
+			t.Fatalf("redactJSON leaked %q in %s", secret, redacted)
+		}
+	}
+}
+
+func TestGatewayDebugLogRedactsInteractionToken(t *testing.T) {
+	s, err := New("Bot bot-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	s.Logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	_, err = s.onEvent(websocket.TextMessage, []byte(`{"op":0,"s":1,"t":"INTERACTION_CREATE","d":{"id":"1","token":"interaction-secret","type":1}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := logs.String(); strings.Contains(got, "interaction-secret") || !strings.Contains(got, "REDACTED") {
+		t.Fatalf("gateway debug log was not redacted: %s", got)
+	}
+}
+
+func TestVoiceDebugLogRedactsSecretKey(t *testing.T) {
+	previousLogger := Logger
+	defer func() { Logger = previousLogger }()
+
+	var logs bytes.Buffer
+	Logger = func(_ int, _ int, format string, args ...interface{}) {
+		fmt.Fprintf(&logs, format, args...)
+	}
+	v := &VoiceConnection{LogLevel: LogDebug}
+	v.onEvent(false, []byte(`{"op":4,"d":{"secret_key":"voice-secret","mode":"invalid"}}`))
+
+	if got := logs.String(); strings.Contains(got, "voice-secret") || !strings.Contains(got, "REDACTED") {
+		t.Fatalf("voice debug log was not redacted: %s", got)
+	}
+}
+
+func TestOwnedVoiceConnectionUsesSessionLogger(t *testing.T) {
+	previousLogger := Logger
+	defer func() { Logger = previousLogger }()
+	Logger = func(_ int, _ int, _ string, _ ...interface{}) {
+		t.Fatal("owned voice connection used package-global logger")
+	}
+
+	session := &Session{}
+	var logs bytes.Buffer
+	session.SetLogger(slog.New(slog.NewTextHandler(
+		&logs,
+		&slog.HandlerOptions{Level: slog.LevelDebug},
+	)))
+	voice := &VoiceConnection{
+		session:  session,
+		LogLevel: -1,
+	}
+	voice.log(LogDebug, "owned voice log")
+	if got := logs.String(); !strings.Contains(got, "owned voice log") {
+		t.Fatalf("session voice log = %q", got)
+	}
+}
+
+func TestDefaultProtocolLogsOmitPrivatePayloads(t *testing.T) {
+	t.Run("handler panic", func(t *testing.T) {
+		session := &Session{SyncEvents: true}
+		var logs bytes.Buffer
+		session.SetLogger(slog.New(slog.NewTextHandler(&logs, nil)))
+		session.AddHandler(func(*Session, *MessageCreate) {
+			panic("https://discord.com/api/v10/webhooks/1/panic-secret")
+		})
+
+		session.handleEvent(messageCreateEventType, &MessageCreate{})
+		if got := logs.String(); strings.Contains(got, "panic-secret") || !strings.Contains(got, "panicked") {
+			t.Fatalf("handler panic log = %q", got)
+		}
+	})
+
+	t.Run("unknown gateway opcode", func(t *testing.T) {
+		session, err := New("Bot token")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var logs bytes.Buffer
+		session.SetLogger(slog.New(slog.NewTextHandler(&logs, nil)))
+		_, err = session.onEvent(
+			websocket.TextMessage,
+			[]byte(`{"op":99,"s":1,"t":"PRIVATE","d":{"content":"private-message-content"}}`),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := logs.String(); strings.Contains(got, "private-message-content") {
+			t.Fatalf("gateway warning log leaked payload: %q", got)
+		}
+	})
+
+	t.Run("malformed voice payload", func(t *testing.T) {
+		previousLogger := Logger
+		defer func() { Logger = previousLogger }()
+
+		var logs bytes.Buffer
+		Logger = func(_ int, _ int, format string, args ...interface{}) {
+			fmt.Fprintf(&logs, format, args...)
+		}
+		voice := &VoiceConnection{LogLevel: LogError}
+		voice.onEvent(
+			false,
+			[]byte(`{"op":4,"d":{"secret_key":"not-base64-private-secret","content":"private-voice-content"}}`),
+		)
+		got := logs.String()
+		for _, secret := range []string{"not-base64-private-secret", "private-voice-content"} {
+			if strings.Contains(got, secret) {
+				t.Fatalf("voice error log leaked %q: %q", secret, got)
+			}
+		}
+	})
 }

@@ -16,7 +16,7 @@ import (
 // Bot parameters
 var (
 	GuildID        = flag.String("guild", "", "Test guild ID. If not passed - bot registers commands globally")
-	BotToken       = flag.String("token", "", "Bot access token")
+	BotToken       = flag.String("token", "", "Bot token")
 	RemoveCommands = flag.Bool("rmcmd", true, "Remove all commands after shutdowning or not")
 )
 
@@ -26,7 +26,7 @@ func init() { flag.Parse() }
 
 func init() {
 	var err error
-	s, err = dgo.New("Bot " + *BotToken)
+	s, err = dgo.NewBot(*BotToken)
 	if err != nil {
 		log.Fatalf("Invalid bot parameters: %v", err)
 	}
@@ -283,7 +283,7 @@ var (
 			// When the option exists, ok = true
 			if option, ok := optionMap["string-option"]; ok {
 				// Option values must be type asserted from interface{}.
-				// Discordgo provides utility functions to make this simple.
+				// dgo provides utility functions to make this simple.
 				margs = append(margs, option.StringValue())
 				msgformat += "> string-option: %s\n"
 			}
@@ -456,7 +456,7 @@ var (
 					Type: dgo.InteractionResponseType(i.ApplicationCommandData().Options[0].IntValue()),
 				})
 				if err != nil {
-					s.FollowupMessageCreate(i.Interaction, true, &dgo.WebhookParams{
+					s.FollowupMessageCreateComplex(i.Interaction, &dgo.WebhookParams{
 						Content: "Something went wrong",
 					})
 				}
@@ -470,7 +470,7 @@ var (
 				},
 			})
 			if err != nil {
-				s.FollowupMessageCreate(i.Interaction, true, &dgo.WebhookParams{
+				s.FollowupMessageCreateComplex(i.Interaction, &dgo.WebhookParams{
 					Content: "Something went wrong",
 				})
 				return
@@ -483,7 +483,7 @@ var (
 					Content: &content,
 				})
 				if err != nil {
-					s.FollowupMessageCreate(i.Interaction, true, &dgo.WebhookParams{
+					s.FollowupMessageCreateComplex(i.Interaction, &dgo.WebhookParams{
 						Content: "Something went wrong",
 					})
 					return
@@ -493,9 +493,9 @@ var (
 			})
 		},
 		"followups": func(s *dgo.Session, i *dgo.InteractionCreate) {
-			// Followup messages are basically regular messages (you can create as many of them as you wish)
-			// but work as they are created by webhooks and their functionality
-			// is for handling additional messages after sending a response.
+			// Followup messages are webhook messages used for additional replies
+			// after the initial response. User-installed apps are limited to five
+			// followups when the app is not also installed in the server.
 
 			s.InteractionRespond(i.Interaction, &dgo.InteractionResponse{
 				Type: dgo.InteractionResponseChannelMessageWithSource,
@@ -507,11 +507,11 @@ var (
 					Content: "Surprise!",
 				},
 			})
-			msg, err := s.FollowupMessageCreate(i.Interaction, true, &dgo.WebhookParams{
+			msg, err := s.FollowupMessageCreateComplex(i.Interaction, &dgo.WebhookParams{
 				Content: "Followup message has been created, after 5 seconds it will be edited",
 			})
 			if err != nil {
-				s.FollowupMessageCreate(i.Interaction, true, &dgo.WebhookParams{
+				s.FollowupMessageCreateComplex(i.Interaction, &dgo.WebhookParams{
 					Content: "Something went wrong",
 				})
 				return
@@ -527,7 +527,7 @@ var (
 
 			s.FollowupMessageDelete(i.Interaction, msg.ID)
 
-			s.FollowupMessageCreate(i.Interaction, true, &dgo.WebhookParams{
+			s.FollowupMessageCreateComplex(i.Interaction, &dgo.WebhookParams{
 				Content: "For those, who didn't skip anything and followed tutorial along fairly, " +
 					"take a unicorn :unicorn: as reward!\n" +
 					"Also, as bonus... look at the original interaction response :D",

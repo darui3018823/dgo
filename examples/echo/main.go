@@ -38,7 +38,8 @@ func handleEcho(s *dgo.Session, i *dgo.InteractionCreate, opts optionMap) {
 	err := s.InteractionRespond(i.Interaction, &dgo.InteractionResponse{
 		Type: dgo.InteractionResponseChannelMessageWithSource,
 		Data: &dgo.InteractionResponseData{
-			Content: builder.String(),
+			Content:         builder.String(),
+			AllowedMentions: &dgo.MessageAllowedMentions{Parse: []dgo.AllowedMentionType{}},
 		},
 	})
 
@@ -68,7 +69,7 @@ var commands = []*dgo.ApplicationCommand{
 }
 
 var (
-	Token = flag.String("token", "", "Bot authentication token")
+	Token = flag.String("token", "", "Bot token")
 	App   = flag.String("app", "", "Application ID")
 	Guild = flag.String("guild", "", "Guild ID")
 )
@@ -79,7 +80,7 @@ func main() {
 		log.Fatal("application id is not set")
 	}
 
-	session, _ := dgo.New("Bot " + *Token)
+	session, _ := dgo.NewBot(*Token)
 
 	session.AddHandler(func(s *dgo.Session, i *dgo.InteractionCreate) {
 		if i.Type != dgo.InteractionApplicationCommand {

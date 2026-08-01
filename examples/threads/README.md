@@ -1,16 +1,16 @@
-<img align="right" alt="DiscordGo logo" src="/docs/img/discordgo.svg" width="200">
+<img align="right" alt="dgo project mark" src="../../docs/img/dgo.svg" width="200">
 
-## DiscordGo Threads Example
+## dgo threads example
 
-This example demonstrates how to utilize DiscordGo to manage channel threads.
+This example demonstrates how to use dgo to manage channel threads.
 
-**Join [Discord Gophers](https://discord.gg/0f1SbxBZjYoCtNPP)
-Discord chat channel for support.**
+For dgo-specific problems, use [GitHub Issues](https://github.com/darui3018823/dgo/issues).
+For general Go discussion, visit [Discord Gophers](https://discord.gg/golang).
 
 ### Build
 
 This assumes you already have a working Go environment setup and that
-DiscordGo is correctly installed on your system.
+Go 1.26.5 or newer and the module dependencies are available.
 
 From within the threads example folder, run the below command to compile the
 example.
@@ -22,7 +22,8 @@ go build
 ### Usage
 
 ```
-Usage of threads:
+./threads --help
+Usage of ./threads:
   -token string
     	Bot token
 ```

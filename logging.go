@@ -1,17 +1,20 @@
-// Discordgo - Discord bindings for Go
+// dgo - Discord bindings for Go
 // Available at https://github.com/darui3018823/dgo
 
 // Copyright 2015-2016 Bruce Marriner <bruce@sqls.net>.  All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// This file contains code related to discordgo package logging
+// This file contains code related to dgo package logging.
 
 package dgo
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
+	"net/url"
 	"runtime"
 	"strings"
 )
@@ -34,10 +37,100 @@ const (
 	LogDebug
 )
 
-// Logger can be used to replace the standard logging for discordgo
+// Logger can be used to replace the standard logging for dgo.
 var Logger func(msgL, caller int, format string, a ...interface{})
 
-// msglog provides package wide logging consistency for discordgo
+const redactedValue = "[REDACTED]"
+
+func isSensitiveLogKey(key string) bool {
+	key = strings.ToLower(strings.ReplaceAll(key, "-", "_"))
+	return strings.Contains(key, "token") ||
+		strings.Contains(key, "secret") ||
+		key == "authorization" ||
+		key == "session_id" ||
+		key == "code"
+}
+
+func redactJSONValue(value interface{}) interface{} {
+	switch value := value.(type) {
+	case map[string]interface{}:
+		for key, item := range value {
+			if isSensitiveLogKey(key) {
+				// Discord API error codes are numeric and safe to retain. String
+				// authorization codes remain sensitive and are redacted.
+				if strings.EqualFold(key, "code") {
+					if _, isString := item.(string); !isString {
+						value[key] = redactJSONValue(item)
+						continue
+					}
+				}
+				value[key] = redactedValue
+			} else {
+				value[key] = redactJSONValue(item)
+			}
+		}
+	case []interface{}:
+		for index, item := range value {
+			value[index] = redactJSONValue(item)
+		}
+	case string:
+		if parsed, err := url.Parse(value); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+			return sanitizeURL(value)
+		}
+	}
+	return value
+}
+
+func redactJSON(data []byte) string {
+	if len(data) == 0 {
+		return "<empty>"
+	}
+
+	var value interface{}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return "<redacted non-JSON payload>"
+	}
+	value = redactJSONValue(value)
+	redacted, err := json.Marshal(value)
+	if err != nil {
+		return "<redacted JSON payload>"
+	}
+	return string(redacted)
+}
+
+func sanitizeURL(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "<invalid URL>"
+	}
+	parsed.User = nil
+
+	segments := strings.Split(parsed.EscapedPath(), "/")
+	for index, segment := range segments {
+		switch strings.ToLower(segment) {
+		case "webhooks", "interactions":
+			tokenIndex := index + 2
+			if tokenIndex < len(segments) && segments[tokenIndex] != "" {
+				segments[tokenIndex] = redactedValue
+			}
+		}
+	}
+	parsed.RawPath = strings.Join(segments, "/")
+	if path, err := url.PathUnescape(parsed.RawPath); err == nil {
+		parsed.Path = path
+	}
+
+	query := parsed.Query()
+	for key := range query {
+		if isSensitiveLogKey(key) {
+			query.Set(key, redactedValue)
+		}
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
+
+// msglog provides package-wide logging consistency for dgo.
 // the format, a...  portion this command follows that of fmt.Printf
 //
 //	msgL   : LogLevel of the message
@@ -65,23 +158,25 @@ func msglog(msgL, caller int, format string, a ...interface{}) {
 	}
 }
 
-// helper function that wraps msglog for the Session struct
-// This adds a check to insure the message is only logged
-// if the session log level is equal or higher than the
-// message log level
-// helper function that wraps msglog for the Session struct
-// This adds a check to insure the message is only logged
-// if the session log level is equal or higher than the
-// message log level
-func (s *Session) log(msgL int, format string, a ...interface{}) {
-	// Open() and other major methods can call log() while holding Session's write lock.
-	// Using TryRLock avoids a self-deadlock in that case and safely skips the log entry.
-	if !s.TryRLock() {
-		return
-	}
-	logger := s.Logger
-	s.RUnlock()
+// SetLogger safely replaces the structured logger used by the session.
+// A nil logger disables session logging.
+func (s *Session) SetLogger(logger *slog.Logger) {
+	s.loggerMu.Lock()
+	s.Logger = logger
+	s.loggerMu.Unlock()
+}
 
+func (s *Session) logger() *slog.Logger {
+	s.loggerMu.RLock()
+	logger := s.Logger
+	s.loggerMu.RUnlock()
+	return logger
+}
+
+// log writes through the session's slog logger. Filtering is delegated to the
+// configured slog.Handler.
+func (s *Session) log(msgL int, format string, a ...interface{}) {
+	logger := s.logger()
 	if logger == nil {
 		return
 	}
@@ -103,11 +198,14 @@ func (s *Session) log(msgL int, format string, a ...interface{}) {
 	}
 }
 
-// helper function that wraps msglog for the VoiceConnection struct
-// This adds a check to insure the message is only logged
-// if the voice connection log level is equal or higher than the
-// message log level
+// log routes owned voice connections through their Session logger. The
+// package-global logger and LogLevel remain a compatibility fallback for
+// standalone VoiceConnection values.
 func (v *VoiceConnection) log(msgL int, format string, a ...interface{}) {
+	if v.session != nil {
+		v.session.log(msgL, format, a...)
+		return
+	}
 
 	if msgL > v.LogLevel {
 		return

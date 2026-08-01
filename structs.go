@@ -1,11 +1,11 @@
-// Discordgo - Discord bindings for Go
+// dgo - Discord bindings for Go
 // Available at https://github.com/darui3018823/dgo
 
 // Copyright 2015-2016 Bruce Marriner <bruce@sqls.net>.  All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// This file contains all structures for the discordgo package.  These
+// This file contains all structures for the dgo package. These
 // may be moved about later into separate files but I find it easier to have
 // them all located together.
 
@@ -37,11 +37,17 @@ type Session struct {
 	MFA bool
 
 	// Debug for printing JSON request/responses
-	Debug    bool // Deprecated, will be removed.
+	Debug bool // Deprecated, will be removed.
+	// LogLevel is retained for source compatibility. Session logging is filtered
+	// by the configured slog.Handler level.
+	// Deprecated: configure the handler passed to SetLogger instead.
 	LogLevel int
 
-	// Logger for structured logging
-	Logger *slog.Logger
+	// Logger is the structured logger used by the session. Configure it before
+	// starting concurrent session operations, or use SetLogger to replace it
+	// safely while the session is active.
+	Logger   *slog.Logger
+	loggerMu sync.RWMutex
 
 	// Should the session reconnect the websocket on errors.
 	ShouldReconnectOnError bool
@@ -51,6 +57,10 @@ type Session struct {
 
 	// Should the session retry requests when rate limited.
 	ShouldRetryOnRateLimit bool
+
+	// AllowedMentions is used when a message does not provide an explicit
+	// allowed_mentions object. New sessions default to parsing no mentions.
+	AllowedMentions *MessageAllowedMentions
 
 	// Identify is sent during initial handshake with the discord gateway.
 	// https://discord.com/developers/docs/topics/gateway#identify
@@ -64,6 +74,11 @@ type Session struct {
 	ShardID    int
 	ShardCount int
 
+	// IdentifyCoordinator gates fresh Identify requests by Discord's
+	// session-start quota and max_concurrency buckets. Resume bypasses it.
+	// ShardManager configures this automatically for every managed Session.
+	IdentifyCoordinator *IdentifyCoordinator
+
 	// Should state tracking be enabled.
 	// State tracking is the best way for getting the users
 	// active guilds and the members of the guilds.
@@ -73,6 +88,11 @@ type Session struct {
 	// e.g. false = launch event handlers in their own goroutines.
 	SyncEvents bool
 
+	// PanicHandler is called when an event handler panics. Event contains the
+	// value being dispatched and recovered contains the panic value. A nil
+	// PanicHandler logs the panic and keeps the event dispatcher running.
+	PanicHandler func(s *Session, event interface{}, recovered interface{})
+
 	// Exposed but should not be modified by User.
 
 	// Whether the Data Websocket is ready
@@ -80,6 +100,15 @@ type Session struct {
 
 	// Max number of REST API retries
 	MaxRestRetries int
+
+	// Maximum REST response body size in bytes.
+	MaxRestResponseSize int64
+
+	// Maximum time a single REST rate-limit response may ask the client to wait.
+	MaxRestRateLimitWait time.Duration
+
+	// Maximum cumulative time spent waiting between retries for one REST request.
+	MaxRestRetryWait time.Duration
 
 	// Whether the Voice Websocket is ready
 	VoiceReady bool // NOTE: Deprecated.
@@ -109,6 +138,10 @@ type Session struct {
 	// Stores the last Heartbeat sent (in UTC)
 	LastHeartbeatSent time.Time
 
+	// Number of Gateway connections restarted because the previous heartbeat
+	// was not acknowledged before the next interval.
+	missedHeartbeatAcks uint64
+
 	// used to deal with rate limits
 	Ratelimiter *RateLimiter
 
@@ -129,11 +162,41 @@ type Session struct {
 	// stores sessions current Discord Gateway
 	gateway string
 
-	// stores session ID of current Gateway connection
-	sessionID string
+	// Stores resumable Gateway session data independently of the connection
+	// lifecycle lock.
+	gatewaySessionMu sync.RWMutex
+	sessionID        string
+	resumeGatewayURL string
+
+	// Gateway lifecycle state. A Session lifetime can own multiple connection
+	// generations while reconnecting; only the current generation may mutate
+	// wsConn, listening, or DataReady.
+	gatewayLifecycleMu       sync.Mutex
+	gatewayLifecycleCounter  uint64
+	gatewayConnectionCounter uint64
+	gatewayLifecycle         *gatewaySessionLifecycle
+	gatewayConnection        *gatewayConnectionLifecycle
+	gatewayState             gatewayConnectionState
+	gatewayReconnectRunning  bool
+	gatewayRoutineCount      int64
+
+	// Connect and Disconnect transitions are queued so synchronous handlers may
+	// call Close without reordering or duplicating lifecycle events.
+	gatewayEventMu          sync.Mutex
+	gatewayEvents           []gatewayQueuedEvent
+	gatewayEventDispatching bool
+
+	// Voice routines launched for the active Gateway lifetime are tracked here.
+	// Voice implementations obtain cancellation from gatewayContext.
+	voiceRoutineWG sync.WaitGroup
 
 	// used to make sure gateway websocket writes do not happen concurrently
 	wsMutex sync.Mutex
+
+	// Tracks Discord's per-guild cooldown for opcode 8 requests that ask for
+	// the complete member list.
+	guildMembersRequestMu sync.Mutex
+	guildMembersRequests  map[string]time.Time
 }
 
 // ApplicationIntegrationType dictates where application can be installed and its available interaction contexts.
@@ -158,27 +221,69 @@ type ApplicationIntegrationTypeConfig struct {
 	OAuth2InstallParams *ApplicationInstallParams `json:"oauth2_install_params,omitempty"`
 }
 
+// ApplicationEventWebhookStatus controls application event webhooks.
+type ApplicationEventWebhookStatus int
+
+// Application event webhook statuses.
+const (
+	ApplicationEventWebhooksDisabled          ApplicationEventWebhookStatus = 1
+	ApplicationEventWebhooksEnabled           ApplicationEventWebhookStatus = 2
+	ApplicationEventWebhooksDisabledByDiscord ApplicationEventWebhookStatus = 3
+)
+
+// ApplicationEdit contains mutable fields for the current application.
+type ApplicationEdit struct {
+	CustomInstallURL               *string                                                           `json:"custom_install_url,omitempty"`
+	Description                    *string                                                           `json:"description,omitempty"`
+	RoleConnectionsVerificationURL *string                                                           `json:"role_connections_verification_url,omitempty"`
+	InstallParams                  *ApplicationInstallParams                                         `json:"install_params,omitempty"`
+	IntegrationTypesConfig         *map[ApplicationIntegrationType]*ApplicationIntegrationTypeConfig `json:"integration_types_config,omitempty"`
+	Flags                          *int                                                              `json:"flags,omitempty"`
+	Icon                           *string                                                           `json:"icon,omitempty"`
+	CoverImage                     *string                                                           `json:"cover_image,omitempty"`
+	InteractionsEndpointURL        *string                                                           `json:"interactions_endpoint_url,omitempty"`
+	Tags                           *[]string                                                         `json:"tags,omitempty"`
+	EventWebhooksURL               *string                                                           `json:"event_webhooks_url,omitempty"`
+	EventWebhooksStatus            *ApplicationEventWebhookStatus                                    `json:"event_webhooks_status,omitempty"`
+	EventWebhooksTypes             *[]string                                                         `json:"event_webhooks_types,omitempty"`
+}
+
 // Application stores values for a Discord Application
 type Application struct {
-	ID                     string                                                           `json:"id,omitempty"`
-	Name                   string                                                           `json:"name"`
-	Icon                   string                                                           `json:"icon,omitempty"`
-	Description            string                                                           `json:"description,omitempty"`
-	RPCOrigins             []string                                                         `json:"rpc_origins,omitempty"`
-	BotPublic              bool                                                             `json:"bot_public,omitempty"`
-	BotRequireCodeGrant    bool                                                             `json:"bot_require_code_grant,omitempty"`
-	TermsOfServiceURL      string                                                           `json:"terms_of_service_url"`
-	PrivacyProxyURL        string                                                           `json:"privacy_policy_url"`
-	Owner                  *User                                                            `json:"owner"`
-	Summary                string                                                           `json:"summary"`
-	VerifyKey              string                                                           `json:"verify_key"`
-	Team                   *Team                                                            `json:"team"`
-	GuildID                string                                                           `json:"guild_id"`
-	PrimarySKUID           string                                                           `json:"primary_sku_id"`
-	Slug                   string                                                           `json:"slug"`
-	CoverImage             string                                                           `json:"cover_image"`
-	Flags                  int                                                              `json:"flags,omitempty"`
-	IntegrationTypesConfig map[ApplicationIntegrationType]*ApplicationIntegrationTypeConfig `json:"integration_types,omitempty"`
+	ID                                string                                                           `json:"id,omitempty"`
+	Name                              string                                                           `json:"name"`
+	Icon                              string                                                           `json:"icon,omitempty"`
+	Description                       string                                                           `json:"description,omitempty"`
+	RPCOrigins                        []string                                                         `json:"rpc_origins,omitempty"`
+	BotPublic                         bool                                                             `json:"bot_public,omitempty"`
+	BotRequireCodeGrant               bool                                                             `json:"bot_require_code_grant,omitempty"`
+	Bot                               *User                                                            `json:"bot,omitempty"`
+	TermsOfServiceURL                 string                                                           `json:"terms_of_service_url"`
+	PrivacyProxyURL                   string                                                           `json:"privacy_policy_url"`
+	Owner                             *User                                                            `json:"owner"`
+	Summary                           string                                                           `json:"summary"`
+	VerifyKey                         string                                                           `json:"verify_key"`
+	Team                              *Team                                                            `json:"team"`
+	GuildID                           string                                                           `json:"guild_id"`
+	Guild                             *Guild                                                           `json:"guild,omitempty"`
+	PrimarySKUID                      string                                                           `json:"primary_sku_id"`
+	Slug                              string                                                           `json:"slug"`
+	CoverImage                        string                                                           `json:"cover_image"`
+	Flags                             int                                                              `json:"flags,omitempty"`
+	FlagsNew                          string                                                           `json:"flags_new,omitempty"`
+	ApproximateGuildCount             *int                                                             `json:"approximate_guild_count,omitempty"`
+	ApproximateUserInstallCount       *int                                                             `json:"approximate_user_install_count,omitempty"`
+	ApproximateUserAuthorizationCount *int                                                             `json:"approximate_user_authorization_count,omitempty"`
+	RedirectURIs                      []string                                                         `json:"redirect_uris,omitempty"`
+	InteractionsEndpointURL           *string                                                          `json:"interactions_endpoint_url,omitempty"`
+	RoleConnectionsVerificationURL    *string                                                          `json:"role_connections_verification_url,omitempty"`
+	EventWebhooksURL                  *string                                                          `json:"event_webhooks_url,omitempty"`
+	EventWebhooksStatus               ApplicationEventWebhookStatus                                    `json:"event_webhooks_status,omitempty"`
+	EventWebhooksTypes                []string                                                         `json:"event_webhooks_types,omitempty"`
+	Tags                              []string                                                         `json:"tags,omitempty"`
+	InstallParams                     *ApplicationInstallParams                                        `json:"install_params,omitempty"`
+	IntegrationTypesConfig            map[ApplicationIntegrationType]*ApplicationIntegrationTypeConfig `json:"integration_types_config,omitempty"`
+	CustomInstallURL                  string                                                           `json:"custom_install_url,omitempty"`
 }
 
 // ApplicationRoleConnectionMetadataType represents the type of application role connection metadata.
@@ -299,6 +404,43 @@ type Invite struct {
 	ExpiresAt *time.Time `json:"expires_at"`
 }
 
+// InviteTargetUsersJobStatus is the processing status of an invite
+// target-users CSV file.
+type InviteTargetUsersJobStatus int
+
+// Invite target-users job statuses.
+const (
+	InviteTargetUsersJobStatusUnspecified InviteTargetUsersJobStatus = iota
+	InviteTargetUsersJobStatusProcessing
+	InviteTargetUsersJobStatusCompleted
+	InviteTargetUsersJobStatusFailed
+)
+
+// InviteTargetUsersJob describes the asynchronous processing of an invite
+// target-users CSV file.
+type InviteTargetUsersJob struct {
+	Status         InviteTargetUsersJobStatus `json:"status"`
+	TotalUsers     int                        `json:"total_users"`
+	ProcessedUsers int                        `json:"processed_users"`
+	CreatedAt      time.Time                  `json:"created_at"`
+	CompletedAt    *time.Time                 `json:"completed_at"`
+	ErrorMessage   *string                    `json:"error_message"`
+}
+
+// GroupDMCreateParams contains the OAuth2 access tokens and nicknames used to
+// create a group DM. Each access token must have the gdm.join scope.
+type GroupDMCreateParams struct {
+	AccessTokens []string          `json:"access_tokens"`
+	Nicks        map[string]string `json:"nicks"`
+}
+
+// GroupDMAddRecipientParams contains the data required to add a recipient to a
+// group DM. AccessToken must have the gdm.join scope for the recipient.
+type GroupDMAddRecipientParams struct {
+	AccessToken string `json:"access_token"`
+	Nick        string `json:"nick"`
+}
+
 // ChannelType is the type of a Channel
 type ChannelType int
 
@@ -355,6 +497,20 @@ const (
 	ForumLayoutGalleryView ForumLayout = 2
 )
 
+// ChannelInfoChannel contains requested ephemeral fields for one channel.
+type ChannelInfoChannel struct {
+	ID             string  `json:"id"`
+	Status         *string `json:"status,omitempty"`
+	VoiceStartTime *int64  `json:"voice_start_time,omitempty"`
+}
+
+// GatewayRateLimitMetadata identifies the request affected by a Gateway rate
+// limit. GuildID and Nonce are currently supplied for opcode 8.
+type GatewayRateLimitMetadata struct {
+	GuildID string `json:"guild_id,omitempty"`
+	Nonce   string `json:"nonce,omitempty"`
+}
+
 // A Channel holds all data related to an individual Discord channel.
 type Channel struct {
 	// The ID of the channel.
@@ -372,6 +528,12 @@ type Channel struct {
 
 	// The type of the channel.
 	Type ChannelType `json:"type"`
+
+	// The permissions available in this channel when it is embedded in an interaction.
+	Permissions int64 `json:"permissions,string"`
+
+	// The app's permissions in this channel when it is embedded in an interaction.
+	AppPermissions int64 `json:"app_permissions,string"`
 
 	// The ID of the last message sent in the channel. This is not
 	// guaranteed to be an ID of a valid message.
@@ -849,6 +1011,10 @@ type Guild struct {
 	// A list of the custom stickers present in the guild.
 	Stickers []*Sticker `json:"stickers"`
 
+	// A list of soundboard sounds in the guild.
+	// This field is present in Guild Create events.
+	SoundboardSounds []*SoundboardSound `json:"soundboard_sounds"`
+
 	// A list of the members in the guild.
 	// This field is only present in GUILD_CREATE events and websocket
 	// update events, and thus is only present in state-cached guilds.
@@ -950,6 +1116,12 @@ type Guild struct {
 
 	// Stage instances in the guild
 	StageInstances []*StageInstance `json:"stage_instances"`
+
+	// The welcome screen shown to new members of a Community guild.
+	WelcomeScreen *GuildWelcomeScreen `json:"welcome_screen,omitempty"`
+
+	// The active safety incident actions and detections for the guild.
+	IncidentsData *IncidentsData `json:"incidents_data"`
 }
 
 // A GuildPreview holds data related to a specific public Discord Guild, even if the user is not in the guild.
@@ -1380,7 +1552,10 @@ const (
 
 // A GuildParams stores all the data needed to update discord guild settings
 type GuildParams struct {
-	Name                        string             `json:"name,omitempty"`
+	Name string `json:"name,omitempty"`
+	// Region is retained for wire compatibility with older Discord API
+	// versions. Current API versions select RTC regions per voice channel.
+	// Deprecated: edit Channel.RTCRegion instead.
 	Region                      string             `json:"region,omitempty"`
 	VerificationLevel           *VerificationLevel `json:"verification_level,omitempty"`
 	DefaultMessageNotifications int                `json:"default_message_notifications,omitempty"` // TODO: Separate type?
@@ -1421,7 +1596,11 @@ type Role struct {
 	Hoist bool `json:"hoist"`
 
 	// The hex color of this role.
+	// Deprecated: use Colors instead.
 	Color int `json:"color"`
+
+	// The colors of this role, including its optional gradient colors.
+	Colors RoleColors `json:"colors"`
 
 	// The position of this role in the guild's role hierarchy.
 	Position int `json:"position"`
@@ -1442,6 +1621,23 @@ type Role struct {
 	// be checked by performing a bitwise AND between this int and the flag.
 	Flags RoleFlags `json:"flags"`
 }
+
+// RoleColors represents the solid or gradient colors assigned to a role.
+type RoleColors struct {
+	// PrimaryColor is the base color of the role.
+	PrimaryColor int `json:"primary_color"`
+	// SecondaryColor is the optional second color in the role gradient.
+	SecondaryColor *int `json:"secondary_color"`
+	// TertiaryColor is the optional holographic preset color.
+	TertiaryColor *int `json:"tertiary_color"`
+}
+
+// Holographic role color preset values.
+const (
+	RoleHolographicPrimaryColor   = 11127295
+	RoleHolographicSecondaryColor = 16759788
+	RoleHolographicTertiaryColor  = 16761760
+)
 
 // RoleFlags represent the flags of a Role.
 // https://discord.com/developers/docs/topics/permissions#role-object-role-flags
@@ -1479,8 +1675,11 @@ func (r *Role) IconURL(size string) string {
 type RoleParams struct {
 	// The role's name
 	Name string `json:"name,omitempty"`
-	// The color the role should have (as a decimal, not hex)
+	// The color the role should have (as a decimal, not hex).
+	// Deprecated: use Colors instead.
 	Color *int `json:"color,omitempty"`
+	// The solid or gradient colors the role should have.
+	Colors *RoleColors `json:"colors,omitempty"`
 	// Whether to display the role's users separately
 	Hoist *bool `json:"hoist,omitempty"`
 	// The overall permissions number of the role
@@ -1525,6 +1724,21 @@ type VoiceState struct {
 	SelfVideo               bool       `json:"self_video"`
 	Suppress                bool       `json:"suppress"`
 	RequestToSpeakTimestamp *time.Time `json:"request_to_speak_timestamp"`
+}
+
+// UserVoiceStateEditParams contains fields accepted when modifying another
+// user's voice state.
+type UserVoiceStateEditParams struct {
+	ChannelID *string `json:"channel_id,omitempty"`
+	Suppress  *bool   `json:"suppress,omitempty"`
+}
+
+// CurrentUserVoiceStateEditParams contains fields accepted when modifying the
+// current user's voice state. A non-nil outer pointer containing a nil
+// RequestToSpeakTimestamp encodes JSON null and clears the request to speak.
+type CurrentUserVoiceStateEditParams struct {
+	UserVoiceStateEditParams
+	RequestToSpeakTimestamp **time.Time `json:"request_to_speak_timestamp,omitempty"`
 }
 
 // A Presence stores the online, offline, or idle and game status of Guild members.
@@ -1604,6 +1818,12 @@ type Member struct {
 
 	// The hash of the banner for the guild member, if any.
 	Banner string `json:"banner"`
+
+	// Data for the member's guild avatar decoration, if one is equipped.
+	AvatarDecorationData *AvatarDecorationData `json:"avatar_decoration_data"`
+
+	// The member's collectible profile cosmetics.
+	Collectibles *Collectibles `json:"collectibles"`
 
 	// The underlying user on which the member is based.
 	User *User `json:"user"`
@@ -1699,6 +1919,7 @@ type TooManyRequests struct {
 	Bucket     string        `json:"bucket"`
 	Message    string        `json:"message"`
 	RetryAfter time.Duration `json:"retry_after"`
+	Global     bool          `json:"global"`
 }
 
 // UnmarshalJSON helps support translation of a milliseconds-based float
@@ -1708,6 +1929,7 @@ func (t *TooManyRequests) UnmarshalJSON(b []byte) error {
 		Bucket     string  `json:"bucket"`
 		Message    string  `json:"message"`
 		RetryAfter float64 `json:"retry_after"`
+		Global     bool    `json:"global"`
 	}{}
 	err := Unmarshal(b, &u)
 	if err != nil {
@@ -1716,6 +1938,7 @@ func (t *TooManyRequests) UnmarshalJSON(b []byte) error {
 
 	t.Bucket = u.Bucket
 	t.Message = u.Message
+	t.Global = u.Global
 	whole, frac := math.Modf(u.RetryAfter)
 	t.RetryAfter = time.Duration(whole)*time.Second + time.Duration(frac*1000)*time.Millisecond
 	return nil
@@ -1844,13 +2067,103 @@ type GuildEmbed struct {
 	ChannelID string `json:"channel_id,omitempty"`
 }
 
+// GuildWidget contains the public widget data exposed by a guild.
+type GuildWidget struct {
+	ID            string               `json:"id"`
+	Name          string               `json:"name"`
+	InstantInvite *string              `json:"instant_invite"`
+	Channels      []*Channel           `json:"channels"`
+	Members       []*GuildWidgetMember `json:"members"`
+	PresenceCount int                  `json:"presence_count"`
+}
+
+// GuildWidgetMember is the anonymized user and presence data returned in a
+// public guild widget.
+type GuildWidgetMember struct {
+	ID            string  `json:"id"`
+	Username      string  `json:"username"`
+	Discriminator string  `json:"discriminator"`
+	Avatar        *string `json:"avatar"`
+	Status        Status  `json:"status"`
+	AvatarURL     string  `json:"avatar_url"`
+}
+
+// GuildVanityURL contains the partial invite returned for a guild vanity URL.
+type GuildVanityURL struct {
+	Code *string `json:"code"`
+	Uses int     `json:"uses"`
+}
+
+// GuildWelcomeScreen is the welcome screen shown to new guild members.
+type GuildWelcomeScreen struct {
+	Description     *string                      `json:"description"`
+	WelcomeChannels []*GuildWelcomeScreenChannel `json:"welcome_channels"`
+}
+
+// GuildWelcomeScreenChannel is a channel displayed on a guild welcome screen.
+type GuildWelcomeScreenChannel struct {
+	ChannelID   string  `json:"channel_id"`
+	Description string  `json:"description"`
+	EmojiID     *string `json:"emoji_id"`
+	EmojiName   *string `json:"emoji_name"`
+}
+
+// GuildWelcomeScreenEditParams contains optional and nullable welcome-screen
+// fields. A non-nil outer pointer containing nil encodes JSON null.
+type GuildWelcomeScreenEditParams struct {
+	Enabled         **bool                        `json:"enabled,omitempty"`
+	WelcomeChannels *[]*GuildWelcomeScreenChannel `json:"welcome_channels,omitempty"`
+	Description     **string                      `json:"description,omitempty"`
+}
+
+// IncidentsData describes active safety actions and detected incidents.
+type IncidentsData struct {
+	InvitesDisabledUntil *time.Time `json:"invites_disabled_until"`
+	DMsDisabledUntil     *time.Time `json:"dms_disabled_until"`
+	DMSpamDetectedAt     *time.Time `json:"dm_spam_detected_at,omitempty"`
+	RaidDetectedAt       *time.Time `json:"raid_detected_at,omitempty"`
+}
+
+// GuildIncidentActionsEditParams contains optional and nullable incident
+// actions. A non-nil outer pointer containing nil disables the action.
+type GuildIncidentActionsEditParams struct {
+	InvitesDisabledUntil **time.Time `json:"invites_disabled_until,omitempty"`
+	DMsDisabledUntil     **time.Time `json:"dms_disabled_until,omitempty"`
+}
+
+// GuildBulkBanParams contains the users and message history window for a bulk
+// guild ban.
+type GuildBulkBanParams struct {
+	UserIDs              []string `json:"user_ids"`
+	DeleteMessageSeconds int      `json:"delete_message_seconds,omitempty"`
+}
+
+// GuildBulkBanResponse reports which users were and were not banned.
+type GuildBulkBanResponse struct {
+	BannedUsers []string `json:"banned_users"`
+	FailedUsers []string `json:"failed_users"`
+}
+
 // A GuildAuditLog stores data for a guild audit log.
 // https://discord.com/developers/docs/resources/audit-log#audit-log-object-audit-log-structure
 type GuildAuditLog struct {
-	Webhooks        []*Webhook       `json:"webhooks,omitempty"`
-	Users           []*User          `json:"users,omitempty"`
-	AuditLogEntries []*AuditLogEntry `json:"audit_log_entries"`
-	Integrations    []*Integration   `json:"integrations"`
+	ApplicationCommands  []*ApplicationCommand  `json:"application_commands"`
+	AuditLogEntries      []*AuditLogEntry       `json:"audit_log_entries"`
+	AutoModerationRules  []*AutoModerationRule  `json:"auto_moderation_rules"`
+	GuildScheduledEvents []*GuildScheduledEvent `json:"guild_scheduled_events"`
+	Integrations         []*Integration         `json:"integrations"`
+	Threads              []*Channel             `json:"threads"`
+	Users                []*User                `json:"users"`
+	Webhooks             []*Webhook             `json:"webhooks"`
+}
+
+// GuildAuditLogParams controls filtering and pagination for GuildAuditLogComplex.
+type GuildAuditLogParams struct {
+	UserID     string
+	ActionType AuditLogAction
+	BeforeID   string
+	AfterID    string
+	Limit      int
 }
 
 // AuditLogEntry for a GuildAuditLog
@@ -2037,6 +2350,7 @@ type AuditLogOptions struct {
 	AutoModerationRuleName        string               `json:"auto_moderation_rule_name"`
 	AutoModerationRuleTriggerType string               `json:"auto_moderation_rule_trigger_type"`
 	IntegrationType               string               `json:"integration_type"`
+	Status                        string               `json:"status"`
 }
 
 // AuditLogOptionsType of the AuditLogOption
@@ -2116,12 +2430,17 @@ const (
 
 	AuditLogActionApplicationCommandPermissionUpdate AuditLogAction = 121
 
+	AuditLogActionSoundboardSoundCreate AuditLogAction = 130
+	AuditLogActionSoundboardSoundUpdate AuditLogAction = 131
+	AuditLogActionSoundboardSoundDelete AuditLogAction = 132
+
 	AuditLogActionAutoModerationRuleCreate                AuditLogAction = 140
 	AuditLogActionAutoModerationRuleUpdate                AuditLogAction = 141
 	AuditLogActionAutoModerationRuleDelete                AuditLogAction = 142
 	AuditLogActionAutoModerationBlockMessage              AuditLogAction = 143
 	AuditLogActionAutoModerationFlagToChannel             AuditLogAction = 144
 	AuditLogActionAutoModerationUserCommunicationDisabled AuditLogAction = 145
+	AuditLogActionAutoModerationQuarantineUser            AuditLogAction = 146
 
 	AuditLogActionCreatorMonetizationRequestCreated AuditLogAction = 150
 	AuditLogActionCreatorMonetizationTermsAccepted  AuditLogAction = 151
@@ -2132,8 +2451,15 @@ const (
 	AuditLogActionOnboardingCreate       AuditLogAction = 166
 	AuditLogActionOnboardingUpdate       AuditLogAction = 167
 
-	AuditLogActionHomeSettingsCreate = 190
-	AuditLogActionHomeSettingsUpdate = 191
+	AuditLogActionHomeSettingsCreate AuditLogAction = 190
+	AuditLogActionHomeSettingsUpdate AuditLogAction = 191
+
+	AuditLogActionVoiceChannelStatusCreate AuditLogAction = 192
+	AuditLogActionVoiceChannelStatusDelete AuditLogAction = 193
+
+	// AuditLogActionVoiceChannelStatusUpdate is an alias retained for the
+	// terminology used when voice channel status audit logs were announced.
+	AuditLogActionVoiceChannelStatusUpdate = AuditLogActionVoiceChannelStatusCreate
 )
 
 // GuildMemberParams stores data needed to update a member
@@ -2215,11 +2541,15 @@ type APIErrorMessage struct {
 
 // MessageReaction stores the data for a message reaction.
 type MessageReaction struct {
-	UserID    string `json:"user_id"`
-	MessageID string `json:"message_id"`
-	Emoji     Emoji  `json:"emoji"`
-	ChannelID string `json:"channel_id"`
-	GuildID   string `json:"guild_id,omitempty"`
+	UserID          string       `json:"user_id"`
+	MessageID       string       `json:"message_id"`
+	MessageAuthorID string       `json:"message_author_id,omitempty"`
+	Emoji           Emoji        `json:"emoji"`
+	ChannelID       string       `json:"channel_id"`
+	GuildID         string       `json:"guild_id,omitempty"`
+	Burst           bool         `json:"burst"`
+	BurstColors     []string     `json:"burst_colors,omitempty"`
+	Type            ReactionType `json:"type"`
 }
 
 // GatewayBotResponse stores the data for the gateway/bot response
@@ -2263,6 +2593,32 @@ type Activity struct {
 	Secrets       Secrets      `json:"secrets,omitempty"`
 	Instance      bool         `json:"instance,omitempty"`
 	Flags         int          `json:"flags,omitempty"`
+}
+
+// ApplicationActivityLocationKind identifies where an Activity instance runs.
+type ApplicationActivityLocationKind string
+
+// Application Activity location kinds.
+const (
+	ApplicationActivityLocationGuildChannel   ApplicationActivityLocationKind = "gc"
+	ApplicationActivityLocationPrivateChannel ApplicationActivityLocationKind = "pc"
+)
+
+// ApplicationActivityLocation describes where an Activity instance runs.
+type ApplicationActivityLocation struct {
+	ID        string                          `json:"id"`
+	Kind      ApplicationActivityLocationKind `json:"kind"`
+	ChannelID string                          `json:"channel_id"`
+	GuildID   *string                         `json:"guild_id,omitempty"`
+}
+
+// ApplicationActivityInstance describes a currently running Activity.
+type ApplicationActivityInstance struct {
+	ApplicationID string                      `json:"application_id"`
+	InstanceID    string                      `json:"instance_id"`
+	LaunchID      string                      `json:"launch_id"`
+	Location      ApplicationActivityLocation `json:"location"`
+	Users         []string                    `json:"users"`
 }
 
 // UnmarshalJSON is a custom unmarshaljson to make CreatedAt a time.Time instead of an int
@@ -2348,11 +2704,14 @@ type Identify struct {
 // IdentifyProperties contains the "properties" portion of an Identify packet
 // https://discord.com/developers/docs/topics/gateway#identify-identify-connection-properties
 type IdentifyProperties struct {
-	OS              string `json:"$os"`
-	Browser         string `json:"$browser"`
-	Device          string `json:"$device"`
-	Referer         string `json:"$referer"`
-	ReferringDomain string `json:"$referring_domain"`
+	OS      string `json:"os"`
+	Browser string `json:"browser"`
+	Device  string `json:"device"`
+
+	// Deprecated: browser-client referral properties are not part of the
+	// public bot Gateway identify contract and are not serialized.
+	Referer         string `json:"-"`
+	ReferringDomain string `json:"-"`
 }
 
 // StageInstance holds information about a live stage.
@@ -2630,11 +2989,11 @@ type EntitlementFilterOptions struct {
 	// Optional array of SKU IDs to check for.
 	SkuIDs []string
 
-	// Optional timestamp to retrieve Entitlements before this time.
-	Before *time.Time
+	// Optional entitlement snowflake ID to retrieve Entitlements before.
+	Before string
 
-	// Optional timestamp to retrieve Entitlements after this time.
-	After *time.Time
+	// Optional entitlement snowflake ID to retrieve Entitlements after.
+	After string
 
 	// Optional maximum number of entitlements to return (1-100, default 100).
 	Limit int
@@ -2644,6 +3003,9 @@ type EntitlementFilterOptions struct {
 
 	// Optional whether or not ended entitlements should be omitted.
 	ExcludeEnded bool
+
+	// Optional whether or not deleted entitlements should be omitted.
+	ExcludeDeleted bool
 }
 
 // Constants for the different bit offsets of text channel permissions
@@ -2699,11 +3061,20 @@ const (
 	// Allows sending voice messages.
 	PermissionSendVoiceMessages = 1 << 46
 
+	// Allows setting the status of a voice channel.
+	PermissionSetVoiceChannelStatus = 1 << 48
+
 	// Allows sending polls.
 	PermissionSendPolls = 1 << 49
 
 	// Allows user-installed apps to send public responses. When disabled, users will still be allowed to use their apps but the responses will be ephemeral. This only applies to apps not also installed to the server.
 	PermissionUseExternalApps = 1 << 50
+
+	// Allows pinning and unpinning messages.
+	PermissionPinMessages = 1 << 51
+
+	// Allows bypassing slowmode restrictions.
+	PermissionBypassSlowmode = 1 << 52
 )
 
 // Constants for the different bit offsets of voice permissions
@@ -2826,7 +3197,19 @@ const (
 		PermissionEmbedLinks |
 		PermissionAttachFiles |
 		PermissionReadMessageHistory |
-		PermissionMentionEveryone
+		PermissionMentionEveryone |
+		PermissionUseExternalEmojis |
+		PermissionUseApplicationCommands |
+		PermissionManageThreads |
+		PermissionCreatePublicThreads |
+		PermissionCreatePrivateThreads |
+		PermissionUseExternalStickers |
+		PermissionSendMessagesInThreads |
+		PermissionSendVoiceMessages |
+		PermissionSendPolls |
+		PermissionUseExternalApps |
+		PermissionPinMessages |
+		PermissionBypassSlowmode
 	PermissionAllVoice = PermissionViewChannel |
 		PermissionVoiceConnect |
 		PermissionVoiceSpeak |
@@ -2834,21 +3217,35 @@ const (
 		PermissionVoiceDeafenMembers |
 		PermissionVoiceMoveMembers |
 		PermissionVoiceUseVAD |
-		PermissionVoicePrioritySpeaker
+		PermissionVoicePrioritySpeaker |
+		PermissionVoiceStreamVideo |
+		PermissionVoiceRequestToSpeak |
+		PermissionUseEmbeddedActivities |
+		PermissionUseSoundboard |
+		PermissionUseExternalSounds |
+		PermissionSetVoiceChannelStatus
 	PermissionAllChannel = PermissionAllText |
 		PermissionAllVoice |
 		PermissionCreateInstantInvite |
 		PermissionManageRoles |
 		PermissionManageChannels |
-		PermissionAddReactions |
-		PermissionViewAuditLogs
+		PermissionAddReactions
 	PermissionAll = PermissionAllChannel |
 		PermissionKickMembers |
 		PermissionBanMembers |
-		PermissionManageServer |
+		PermissionManageGuild |
 		PermissionAdministrator |
 		PermissionManageWebhooks |
-		PermissionManageEmojis
+		PermissionManageGuildExpressions |
+		PermissionViewAuditLogs |
+		PermissionViewGuildInsights |
+		PermissionChangeNickname |
+		PermissionManageNicknames |
+		PermissionManageEvents |
+		PermissionModerateMembers |
+		PermissionViewCreatorMonetizationAnalytics |
+		PermissionCreateGuildExpressions |
+		PermissionCreateEvents
 )
 
 // Block contains Discord JSON Error Response codes
@@ -3068,6 +3465,8 @@ const (
 	IntentsDirectMessageTyping    Intent = 1 << 14
 	IntentsMessageContent         Intent = 1 << 15
 	IntentsGuildScheduledEvents   Intent = 1 << 16
+	IntentsGuildMessagePolls      Intent = 1 << 24
+	IntentsDirectMessagePolls     Intent = 1 << 25
 
 	IntentsAllWithoutPrivileged = IntentGuilds |
 		IntentGuildBans |
@@ -3084,7 +3483,9 @@ const (
 		IntentDirectMessageTyping |
 		IntentGuildScheduledEvents |
 		IntentAutoModerationConfiguration |
-		IntentAutoModerationExecution
+		IntentAutoModerationExecution |
+		IntentGuildMessagePolls |
+		IntentDirectMessagePolls
 
 	IntentsAll = IntentsAllWithoutPrivileged |
 		IntentGuildMembers |

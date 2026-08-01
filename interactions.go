@@ -16,6 +16,9 @@ import (
 // InteractionDeadline is the time allowed to respond to an interaction.
 const InteractionDeadline = time.Second * 3
 
+// MaxInteractionBodySize limits unauthenticated interaction request bodies.
+const MaxInteractionBodySize int64 = 1 << 20
+
 // ApplicationCommandType represents the type of application command.
 type ApplicationCommandType uint8
 
@@ -27,6 +30,17 @@ const (
 	UserApplicationCommand ApplicationCommandType = 2
 	// MessageApplicationCommand adds command to message context menu.
 	MessageApplicationCommand ApplicationCommandType = 3
+	// PrimaryEntryPointApplicationCommand launches or invokes an application's Activity.
+	PrimaryEntryPointApplicationCommand ApplicationCommandType = 4
+)
+
+// ApplicationCommandHandlerType controls who handles a primary entry point command.
+type ApplicationCommandHandlerType uint8
+
+// Primary entry point command handler types.
+const (
+	ApplicationCommandHandlerApp                   ApplicationCommandHandlerType = 1
+	ApplicationCommandHandlerDiscordLaunchActivity ApplicationCommandHandlerType = 2
 )
 
 // ApplicationCommand represents an application's slash command.
@@ -45,9 +59,10 @@ type ApplicationCommand struct {
 	NSFW                     *bool  `json:"nsfw,omitempty"`
 
 	// Deprecated: use Contexts instead.
-	DMPermission     *bool                         `json:"dm_permission,omitempty"`
-	Contexts         *[]InteractionContextType     `json:"contexts,omitempty"`
-	IntegrationTypes *[]ApplicationIntegrationType `json:"integration_types,omitempty"`
+	DMPermission     *bool                          `json:"dm_permission,omitempty"`
+	Contexts         *[]InteractionContextType      `json:"contexts,omitempty"`
+	IntegrationTypes *[]ApplicationIntegrationType  `json:"integration_types,omitempty"`
+	Handler          *ApplicationCommandHandlerType `json:"handler,omitempty"`
 
 	// NOTE: Chat commands only. Otherwise it mustn't be set.
 
@@ -223,7 +238,9 @@ type Interaction struct {
 	AppID     string          `json:"application_id"`
 	Type      InteractionType `json:"type"`
 	Data      InteractionData `json:"data"`
+	Guild     *Guild          `json:"guild"`
 	GuildID   string          `json:"guild_id"`
+	Channel   *Channel        `json:"channel"`
 	ChannelID string          `json:"channel_id"`
 
 	// The message on which interaction was used.
@@ -259,6 +276,9 @@ type Interaction struct {
 	// Any entitlements for the invoking user, representing access to premium SKUs.
 	// NOTE: this field is only filled in monetized apps
 	Entitlements []*Entitlement `json:"entitlements"`
+
+	// Maximum size in bytes for each attachment uploaded in response to this interaction.
+	AttachmentSizeLimit int64 `json:"attachment_size_limit"`
 }
 
 type interaction Interaction
@@ -391,10 +411,11 @@ type MessageComponentInteractionData struct {
 
 // MessageComponentInteractionDataResolved contains the resolved data of selected option.
 type MessageComponentInteractionDataResolved struct {
-	Users    map[string]*User    `json:"users"`
-	Members  map[string]*Member  `json:"members"`
-	Roles    map[string]*Role    `json:"roles"`
-	Channels map[string]*Channel `json:"channels"`
+	Users       map[string]*User              `json:"users"`
+	Members     map[string]*Member            `json:"members"`
+	Roles       map[string]*Role              `json:"roles"`
+	Channels    map[string]*Channel           `json:"channels"`
+	Attachments map[string]*MessageAttachment `json:"attachments"`
 }
 
 // Type returns the type of interaction data.
@@ -404,8 +425,9 @@ func (MessageComponentInteractionData) Type() InteractionType {
 
 // ModalSubmitInteractionData contains the data of modal submit interaction.
 type ModalSubmitInteractionData struct {
-	CustomID   string             `json:"custom_id"`
-	Components []MessageComponent `json:"-"`
+	CustomID   string                                  `json:"custom_id"`
+	Components []MessageComponent                      `json:"-"`
+	Resolved   MessageComponentInteractionDataResolved `json:"resolved"`
 }
 
 // Type returns the type of interaction data.
@@ -586,6 +608,8 @@ const (
 	InteractionApplicationCommandAutocompleteResult InteractionResponseType = 8
 	// InteractionResponseModal is for responding to an interaction with a modal window.
 	InteractionResponseModal InteractionResponseType = 9
+	// InteractionResponseLaunchActivity launches the Activity associated with the application.
+	InteractionResponseLaunchActivity InteractionResponseType = 12
 )
 
 // InteractionResponse represents a response for an interaction event.
@@ -621,7 +645,9 @@ type InteractionResponseData struct {
 // signing algorithm, as documented here:
 // https://discord.com/developers/docs/interactions/receiving-and-responding#security-and-authorization
 func VerifyInteraction(r *http.Request, key ed25519.PublicKey) bool {
-	var msg bytes.Buffer
+	if r == nil || r.Body == nil || len(key) != ed25519.PublicKeySize {
+		return false
+	}
 
 	signature := r.Header.Get("X-Signature-Ed25519")
 	if signature == "" {
@@ -642,21 +668,19 @@ func VerifyInteraction(r *http.Request, key ed25519.PublicKey) bool {
 		return false
 	}
 
-	msg.WriteString(timestamp)
-
-	defer r.Body.Close()
-	var body bytes.Buffer
-
-	// at the end of the function, copy the original body back into the request
-	defer func() {
-		r.Body = io.NopCloser(&body)
-	}()
-
-	// copy body into buffers
-	_, err = io.Copy(&msg, io.TeeReader(r.Body, &body))
-	if err != nil {
+	if r.ContentLength > MaxInteractionBodySize {
 		return false
 	}
 
-	return ed25519.Verify(key, msg.Bytes(), sig)
+	defer r.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(r.Body, MaxInteractionBodySize+1))
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if err != nil || int64(len(body)) > MaxInteractionBodySize {
+		return false
+	}
+
+	message := make([]byte, len(timestamp)+len(body))
+	copy(message, timestamp)
+	copy(message[len(timestamp):], body)
+	return ed25519.Verify(key, message, sig)
 }

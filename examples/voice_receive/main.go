@@ -13,16 +13,17 @@ import (
 
 // Variables used for command line parameters
 var (
-	Token     string
-	ChannelID string
-	GuildID   string
+	Token       string
+	ChannelID   string
+	GuildID     string
+	RecordAudio bool
 )
 
 func init() {
-	flag.StringVar(&Token, "t", "", "Bot Token")
+	flag.StringVar(&Token, "t", "", "Bot token")
 	flag.StringVar(&GuildID, "g", "", "Guild in which voice channel exists")
 	flag.StringVar(&ChannelID, "c", "", "Voice channel to connect to")
-	flag.Parse()
+	flag.BoolVar(&RecordAudio, "record", false, "Record received audio to per-SSRC Ogg files (requires consent and a retention policy)")
 }
 
 func createPionRTPPacket(p *dgo.Packet) *rtp.Packet {
@@ -39,35 +40,63 @@ func createPionRTPPacket(p *dgo.Packet) *rtp.Packet {
 	}
 }
 
-func handleVoice(c chan *dgo.Packet) {
+type voiceWriterFactory func(ssrc uint32) (media.Writer, error)
+
+func newOggWriter(ssrc uint32) (media.Writer, error) {
+	return oggwriter.New(fmt.Sprintf("%d.ogg", ssrc), 48000, 2)
+}
+
+func handleVoice(c <-chan *dgo.Packet, record bool, writerFactory voiceWriterFactory) {
+	if !record {
+		for range c {
+			// Receiving voice does not imply permission to persist it. Recording
+			// therefore requires the explicit -record opt-in.
+		}
+		return
+	}
+
 	files := make(map[uint32]media.Writer)
+	defer func() {
+		for _, file := range files {
+			if err := file.Close(); err != nil {
+				fmt.Printf("failed to close recording: %v\n", err)
+			}
+		}
+	}()
+
 	for p := range c {
+		if p == nil {
+			continue
+		}
 		file, ok := files[p.SSRC]
 		if !ok {
 			var err error
-			file, err = oggwriter.New(fmt.Sprintf("%d.ogg", p.SSRC), 48000, 2)
+			file, err = writerFactory(p.SSRC)
 			if err != nil {
 				fmt.Printf("failed to create file %d.ogg, giving up on recording: %v\n", p.SSRC, err)
 				return
 			}
 			files[p.SSRC] = file
 		}
-		// Construct pion RTP packet from DiscordGo's type.
+		// Construct a pion RTP packet from dgo's type.
 		rtp := createPionRTPPacket(p)
 		err := file.WriteRTP(rtp)
 		if err != nil {
 			fmt.Printf("failed to write to file %d.ogg, giving up on recording: %v\n", p.SSRC, err)
 		}
 	}
-
-	// Once we made it here, we're done listening for packets. Close all files
-	for _, f := range files {
-		f.Close()
-	}
 }
 
 func main() {
-	s, err := dgo.New("Bot " + Token)
+	flag.Parse()
+
+	if RecordAudio {
+		fmt.Println("WARNING: recording is enabled; obtain explicit consent, notify participants, and apply a lawful retention and deletion policy")
+	} else {
+		fmt.Println("Recording is disabled; received audio will not be written to files. Use -record only after satisfying the README safety requirements.")
+	}
+
+	s, err := dgo.NewBot(Token)
 	if err != nil {
 		fmt.Println("error creating Discord session:", err)
 		return
@@ -95,5 +124,5 @@ func main() {
 		v.Close()
 	}()
 
-	handleVoice(v.OpusRecv)
+	handleVoice(v.OpusRecv, RecordAudio, newOggWriter)
 }

@@ -23,7 +23,8 @@ go build
 ### Usage
 
 ```
-Usage of scheduled_events:
+./scheduled_events --help
+Usage of ./scheduled_events:
   -guild string
     	Test guild ID
   -token string
@@ -35,5 +36,5 @@ Usage of scheduled_events:
 The below example shows how to start the bot from the scheduled_events example folder.
 
 ```sh
-./scheduled_events -guild YOUR_TESTING_GUILD -token YOUR_BOT_TOKEN -voice YOUR_TESTING_CHANNEL
+./scheduled_events -guild YOUR_TESTING_GUILD_ID -token YOUR_BOT_TOKEN -voice YOUR_VOICE_CHANNEL_ID
 ```

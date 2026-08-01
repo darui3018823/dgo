@@ -13,7 +13,7 @@ import (
 
 // Command line flags
 var (
-	BotToken  = flag.String("token", "", "Bot authorization token")
+	BotToken  = flag.String("token", "", "Bot token")
 	GuildID   = flag.String("guild", "", "ID of the testing guild")
 	ChannelID = flag.String("channel", "", "ID of the testing channel")
 )

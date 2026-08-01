@@ -69,7 +69,7 @@ var commands = []*dgo.ApplicationCommand{
 }
 
 var (
-	Token = flag.String("token", "", "Bot authentication token")
+	Token = flag.String("token", "", "Bot token")
 	App   = flag.String("app", "", "Application ID")
 	Guild = flag.String("guild", "", "Guild ID")
 )

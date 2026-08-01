@@ -32,7 +32,7 @@ credentials are prohibited and are not supported by dgo.
 ./dm_pingpong --help
 Usage of ./dm_pingpong:
   -t string
-        Bot Token
+        Bot token
 ```
 
 The below example shows how to start the bot

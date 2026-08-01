@@ -31,7 +31,7 @@ credentials are prohibited and are not supported by dgo.
 ./pingpong --help
 Usage of ./pingpong:
   -t string
-        Bot Token
+        Bot token
 ```
 
 The below example shows how to start the bot

@@ -20,7 +20,7 @@ var (
 )
 
 func init() {
-	flag.StringVar(&Token, "t", "", "Bot Token")
+	flag.StringVar(&Token, "t", "", "Bot token")
 	flag.StringVar(&GuildID, "g", "", "Guild in which voice channel exists")
 	flag.StringVar(&ChannelID, "c", "", "Voice channel to connect to")
 	flag.BoolVar(&RecordAudio, "record", false, "Record received audio to per-SSRC Ogg files (requires consent and a retention policy)")

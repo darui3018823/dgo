@@ -25,7 +25,8 @@ go build
 ### Usage
 
 ```
-Usage of context_menus:
+./context_menus --help
+Usage of ./context_menus:
   -app string
     	Application ID
   -cleanup
@@ -33,11 +34,11 @@ Usage of context_menus:
   -guild string
     	Test guild ID
   -token string
-    	Bot access token
+        Bot token
 ```
 
 The below example shows how to start the bot from the context_menus example folder.
 
 ```sh
-./context_menus -app YOUR_APPLICATION_ID -guild YOUR_TESTING_GUILD -token YOUR_BOT_TOKEN
+./context_menus -app YOUR_APPLICATION_ID -guild YOUR_TESTING_GUILD_ID -token YOUR_BOT_TOKEN
 ```

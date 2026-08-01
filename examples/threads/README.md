@@ -22,7 +22,8 @@ go build
 ### Usage
 
 ```
-Usage of threads:
+./threads --help
+Usage of ./threads:
   -token string
     	Bot token
 ```

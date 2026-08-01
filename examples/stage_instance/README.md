@@ -22,7 +22,8 @@ go build
 ### Usage
 
 ```
-Usage of stage_instance:
+./stage_instance --help
+Usage of ./stage_instance:
   -guild string
     	Test guild ID
   -stage string
@@ -34,5 +35,5 @@ Usage of stage_instance:
 The below example shows how to start the bot from the stage_instance example folder.
 
 ```sh
-./stage_instance -guild YOUR_TESTING_GUILD -stage STAGE_CHANNEL_ID -token YOUR_BOT_TOKEN
+./stage_instance -guild YOUR_TESTING_GUILD_ID -stage YOUR_STAGE_CHANNEL_ID -token YOUR_BOT_TOKEN
 ```

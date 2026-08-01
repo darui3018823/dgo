@@ -1,6 +1,6 @@
 <img align="right" alt="dgo project mark" src="../../docs/img/dgo.svg" width="200">
 
-## dgo Voice Receive Example
+## dgo voice receive example
 
 This example experiments with receiving voice data from Discord. It joins
 a specified voice channel and listens for 10 seconds. By default it does not
@@ -48,7 +48,11 @@ For general Go discussion, visit [Discord Gophers](https://discord.gg/golang).
 
 ### Build
 
-To build, make sure that modules are enabled, and run:
+This assumes you already have a working Go environment setup and that
+Go 1.26.5 or newer and the module dependencies are available.
+
+From within the voice_receive example folder, run the below command to compile the
+example.
 
 ```sh
 go build
@@ -61,12 +65,12 @@ channel to join, and the ID of the voice channel to join. This default command
 does not create recording files:
 
 ```sh
-./voice_receive -t MY_TOKEN -g 1234123412341234 -c 5678567856785678
+./voice_receive -t YOUR_BOT_TOKEN -g YOUR_GUILD_ID -c YOUR_VOICE_CHANNEL_ID
 ```
 
 After satisfying all recording safety requirements above, recording can be
 enabled explicitly:
 
 ```sh
-./voice_receive -record -t MY_TOKEN -g 1234123412341234 -c 5678567856785678
+./voice_receive -record -t YOUR_BOT_TOKEN -g YOUR_GUILD_ID -c YOUR_VOICE_CHANNEL_ID
 ```

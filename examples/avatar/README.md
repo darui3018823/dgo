@@ -32,7 +32,7 @@ Usage of ./avatar:
   -f string
         Avatar File Name
   -t string
-        Bot Token
+        Bot token
   -u string
         URL to the avatar image
 ```
@@ -40,10 +40,10 @@ Usage of ./avatar:
 The below example shows how to set your Avatar from a local file.
 
 ```sh
-./avatar -t TOKEN -f avatar.png
+./avatar -t YOUR_BOT_TOKEN -f avatar.png
 ```
 The below example shows how to set your Avatar from a URL.
 
 ```sh
-./avatar -t TOKEN -u https://raw.githubusercontent.com/darui3018823/dgo/master/docs/img/dgo.svg
+./avatar -t YOUR_BOT_TOKEN -u https://raw.githubusercontent.com/darui3018823/dgo/master/docs/img/dgo.svg
 ```

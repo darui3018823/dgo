@@ -25,17 +25,18 @@ go build
 ### Usage
 
 ```
-Usage of autocomplete:
+./autocomplete --help
+Usage of ./autocomplete:
   -guild string
     	Test guild ID. If not passed - bot registers commands globally
   -rmcmd
     	Whether to remove all commands after shutting down (default true)
   -token string
-    	Bot access token
+        Bot token
 ```
 
 The below example shows how to start the bot from the autocomplete example folder.
 
 ```sh
-./autocomplete -guild YOUR_TESTING_GUILD -token YOUR_BOT_TOKEN
+./autocomplete -guild YOUR_TESTING_GUILD_ID -token YOUR_BOT_TOKEN
 ```

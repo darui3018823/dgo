@@ -23,17 +23,18 @@ go build
 ### Usage
 
 ```
-Usage of auto_moderation:
+./auto_moderation --help
+Usage of ./auto_moderation:
   -channel string
     	ID of the testing channel
   -guild string
     	ID of the testing guild
   -token string
-    	Bot authorization token
+        Bot token
 ```
 
 The below example shows how to start the bot from the auto_moderation example folder.
 
 ```sh
-./auto_moderation -channel YOUR_TESTING_CHANNEL -guild YOUR_TESTING_GUILD -token YOUR_BOT_TOKEN
+./auto_moderation -channel YOUR_TESTING_CHANNEL_ID -guild YOUR_TESTING_GUILD_ID -token YOUR_BOT_TOKEN
 ```

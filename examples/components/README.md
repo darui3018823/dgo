@@ -24,17 +24,18 @@ go build
 ### Usage
 
 ```
-Usage of components:
+./components --help
+Usage of ./components:
   -app string
     	Application ID
   -guild string
     	Test guild ID
   -token string
-    	Bot access token
+        Bot token
 ```
 
 The below example shows how to start the bot from the components example folder.
 
 ```sh
-./components -app YOUR_APPLICATION_ID -guild YOUR_TESTING_GUILD -token YOUR_BOT_TOKEN
+./components -app YOUR_APPLICATION_ID -guild YOUR_TESTING_GUILD_ID -token YOUR_BOT_TOKEN
 ```

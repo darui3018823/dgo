@@ -20,7 +20,7 @@ var (
 
 func init() {
 
-	flag.StringVar(&Token, "t", "", "Bot Token")
+	flag.StringVar(&Token, "t", "", "Bot token")
 	flag.StringVar(&AvatarFile, "f", "", "Avatar File Name")
 	flag.StringVar(&AvatarURL, "u", "", "URL to the avatar image")
 	flag.Parse()

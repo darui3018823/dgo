@@ -25,7 +25,8 @@ go build
 ### Usage
 
 ```
-Usage of modals:
+./modals --help
+Usage of ./modals:
   -app string
     	Application ID
   -cleanup
@@ -35,11 +36,11 @@ Usage of modals:
   -results string
     	Channel where send survey results to
   -token string
-    	Bot access token
+        Bot token
 ```
 
 The below example shows how to start the bot from the modals example folder.
 
 ```sh
-./modals -app YOUR_APPLICATION_ID -guild YOUR_TESTING_GUILD -results YOUR_TESTING_CHANNEL -token YOUR_BOT_TOKEN
+./modals -app YOUR_APPLICATION_ID -guild YOUR_TESTING_GUILD_ID -results YOUR_RESULTS_CHANNEL_ID -token YOUR_BOT_TOKEN
 ```

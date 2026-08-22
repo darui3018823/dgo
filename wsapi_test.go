@@ -22,6 +22,7 @@ import (
 type gatewayTestServer struct {
 	server      *httptest.Server
 	url         string
+	address     string
 	connections atomic.Int32
 }
 
@@ -42,12 +43,25 @@ func newGatewayTestServer(
 		connection := int(testServer.connections.Add(1))
 		handler(testServer, connection, ws)
 	}))
-	testServer.url = "ws" + strings.TrimPrefix(testServer.server.URL, "http")
+	testServer.url = "wss://gateway.discord.gg"
+	testServer.address = strings.TrimPrefix(testServer.server.URL, "http://")
 	t.Cleanup(func() {
 		testServer.server.CloseClientConnections()
 		testServer.server.Close()
 	})
 	return testServer
+}
+
+func (server *gatewayTestServer) configure(session *Session) {
+	session.gateway = server.url
+	dialer := *websocket.DefaultDialer
+	dialer.Proxy = nil
+	// The URL remains an approved secure Discord URL while this test-only dial
+	// hook routes the already-established transport to the local plain server.
+	dialer.NetDialTLSContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, server.address)
+	}
+	session.Dialer = &dialer
 }
 
 func writeGatewayHello(ws *websocket.Conn, interval time.Duration) error {
@@ -319,10 +333,36 @@ func TestGatewayConnectURLRejectsInvalidURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, gateway := range []string{"", "https://gateway.discord.gg", "wss:///missing-host"} {
+	for _, gateway := range []string{
+		"",
+		"https://gateway.discord.gg",
+		"ws://gateway.discord.gg",
+		"wss:///missing-host",
+		"wss://gateway.discord.gg.attacker.example",
+		"wss://gateway.discord.gg@attacker.example",
+		"wss://gateway.discord.gg:8443",
+		"wss://gateway.discord.gg/#fragment",
+	} {
 		session.gateway = gateway
 		if _, _, err = session.gatewayConnectURL(); err == nil {
 			t.Fatalf("accepted invalid gateway URL %q", gateway)
+		}
+	}
+}
+
+func TestGatewayConnectURLAcceptsDiscordHosts(t *testing.T) {
+	session, err := New("Bot token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, gateway := range []string{
+		"wss://discord.gg/",
+		"wss://gateway.discord.gg/",
+		"wss://gateway-us-east1-b.discord.gg:443/",
+	} {
+		session.gateway = gateway
+		if _, _, err = session.gatewayConnectURL(); err != nil {
+			t.Fatalf("rejected valid gateway URL %q: %v", gateway, err)
 		}
 	}
 }
@@ -850,7 +890,7 @@ func TestOpenStartsHeartbeatBeforeDelayedReady(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.gateway = server.url
+	server.configure(session)
 	session.SyncEvents = true
 	var connects atomic.Int32
 	var disconnects atomic.Int32
@@ -918,7 +958,7 @@ func TestOpenWithContextCancelsGatewayDial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.gateway = "ws://gateway.invalid"
+	session.gateway = "wss://gateway.discord.gg"
 	session.Dialer = &websocket.Dialer{
 		NetDialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			close(dialStarted)
@@ -954,7 +994,7 @@ func TestOpenWithContextCancelsHelloRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.gateway = server.url
+	server.configure(session)
 	ctx, cancel := context.WithCancel(context.Background())
 	openDone := make(chan error, 1)
 	go func() { openDone <- session.OpenWithContext(ctx) }()
@@ -994,7 +1034,7 @@ func TestOpenWithContextCancelsReadyWait(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.gateway = server.url
+	server.configure(session)
 	ctx, cancel := context.WithCancel(context.Background())
 	openDone := make(chan error, 1)
 	go func() { openDone <- session.OpenWithContext(ctx) }()
@@ -1037,7 +1077,7 @@ func TestOpenReconnectsWhenOpcode7ArrivesBeforeReady(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.gateway = server.url
+	server.configure(session)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err = session.OpenWithContext(ctx); err != nil {
@@ -1075,7 +1115,7 @@ func TestOpenCancelInterruptsInvalidSessionBackoff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.gateway = server.url
+	server.configure(session)
 	ctx, cancel := context.WithCancel(context.Background())
 	openDone := make(chan error, 1)
 	go func() { openDone <- session.OpenWithContext(ctx) }()
@@ -1125,7 +1165,7 @@ func TestGatewayReconnectCloseRaceEmitsOneDisconnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.gateway = server.url
+	server.configure(session)
 	session.SyncEvents = true
 	var connects atomic.Int32
 	var disconnects atomic.Int32
@@ -1184,7 +1224,7 @@ func TestGatewayLifetimeContextCancellationClosesReadyConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.gateway = server.url
+	server.configure(session)
 	session.SyncEvents = true
 	var connects atomic.Int32
 	var disconnects atomic.Int32
@@ -1225,7 +1265,7 @@ func TestConnectHandlerCanCloseWithoutDeadlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.gateway = server.url
+	server.configure(session)
 	session.SyncEvents = true
 	var connects atomic.Int32
 	var disconnects atomic.Int32
@@ -1391,7 +1431,7 @@ func TestServerHeartbeatBypassesGatewayRateLimitQueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.gateway = server.url
+	server.configure(session)
 	if err := session.Open(); err != nil {
 		t.Fatal(err)
 	}

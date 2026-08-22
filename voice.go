@@ -18,8 +18,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
+	"regexp"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -98,6 +99,37 @@ type VoiceConnection struct {
 
 	voiceSpeakingUpdateHandlers []VoiceSpeakingUpdateHandler
 	voiceClientsConnectHandlers []VoiceClientsConnectHandler
+}
+
+var discordVoiceHostname = regexp.MustCompile(
+	`(?i)^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+` +
+		`(?:discord\.media|discord\.gg|discordapp\.com|discord\.com|discordpartygames\.com|` +
+		`discord-activities\.com|discordactivities\.com|discordsays\.com)$`,
+)
+
+func voiceGatewayURL(endpoint string) (string, error) {
+	parsed, err := url.Parse("wss://" + endpoint)
+	if err != nil || parsed.Host == "" {
+		return "", errors.New("invalid voice endpoint")
+	}
+	if parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("voice endpoint must contain only a host and optional port")
+	}
+	if !discordVoiceHostname.MatchString(parsed.Hostname()) {
+		return "", errors.New("voice endpoint must use an approved Discord host")
+	}
+	port := parsed.Port()
+	if port != "" {
+		portNumber, parseErr := strconv.Atoi(port)
+		if parseErr != nil || portNumber < 1 || portNumber > 65535 {
+			return "", errors.New("voice endpoint port is invalid")
+		}
+	}
+	if port == "80" {
+		parsed.Host = parsed.Hostname()
+	}
+	parsed.RawQuery = "v=8"
+	return parsed.String(), nil
 }
 
 type voiceWebsocketGeneration struct {
@@ -526,35 +558,10 @@ func (v *VoiceConnection) openVoiceWebsocket(resume bool) error {
 		return ErrVoiceSessionUnavailable
 	}
 
-	allowedDomains := []string{
-		".discord.media",          // Voice servers
-		".discord.gg",             // Invite shortlinks
-		".discordapp.com",         // Old domain
-		".discord.com",            // Main domain
-		".discordpartygames.com",  // Voice channels
-		".discord-activities.com", // Voice channels
-		".discordactivities.com",  // Voice channels
-		".discordsays.com",        // Voice channels
+	vg, err := voiceGatewayURL(endpoint)
+	if err != nil {
+		return err
 	}
-
-	endpointHost := endpoint
-	if host, _, err := net.SplitHostPort(endpoint); err == nil {
-		endpointHost = host
-	}
-
-	isValid := false
-	for _, domain := range allowedDomains {
-		if strings.HasSuffix(endpointHost, domain) {
-			isValid = true
-			break
-		}
-	}
-
-	if !isValid {
-		return fmt.Errorf("invalid voice endpoint: %s", endpoint)
-	}
-
-	vg := "wss://" + strings.TrimSuffix(endpoint, ":80") + "?v=8"
 	v.log(LogInformational, "connecting to voice endpoint %s", vg)
 	wsConn, _, err := session.Dialer.DialContext(ctx, vg, nil)
 	if err != nil {

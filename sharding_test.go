@@ -516,6 +516,13 @@ func TestShardManagerOpensFakeGatewayWithIdentifyBuckets(t *testing.T) {
 	manager, err := NewShardManagerWithConfig(context.Background(), ShardManagerConfig{
 		Token:       "Bot manager-gateway",
 		RESTSession: restSession,
+		NewSession: func(_, _ int) (*Session, error) {
+			session, sessionErr := New("Bot manager-gateway")
+			if sessionErr == nil {
+				server.configure(session)
+			}
+			return session, sessionErr
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -612,7 +619,7 @@ func TestGatewayResumeDoesNotConsumeIdentifyQuota(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session.gateway = server.url
+	server.configure(session)
 	session.IdentifyCoordinator = coordinator
 	session.gatewaySessionMu.Lock()
 	session.sessionID = "resumable-session"

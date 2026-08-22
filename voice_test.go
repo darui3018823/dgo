@@ -53,6 +53,47 @@ func testWebsocketPair(t *testing.T) (*websocket.Conn, *websocket.Conn) {
 	return client, result.conn
 }
 
+func TestVoiceGatewayURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		want     string
+		wantErr  bool
+	}{
+		{name: "default port", endpoint: "sweetwater-12345.discord.media", want: "wss://sweetwater-12345.discord.media?v=8"},
+		{name: "explicit port", endpoint: "c-waw05-3976556b.discord.media:8443", want: "wss://c-waw05-3976556b.discord.media:8443?v=8"},
+		{name: "legacy port", endpoint: "voice.discord.media:80", want: "wss://voice.discord.media?v=8"},
+		{name: "activity domain", endpoint: "voice.discord-activities.com", want: "wss://voice.discord-activities.com?v=8"},
+		{name: "empty", wantErr: true},
+		{name: "apex", endpoint: "discord.media", wantErr: true},
+		{name: "foreign host", endpoint: "attacker.example", wantErr: true},
+		{name: "suffix confusion", endpoint: "voice.discord.media.attacker.example", wantErr: true},
+		{name: "userinfo", endpoint: "voice.discord.media@attacker.example", wantErr: true},
+		{name: "path", endpoint: "voice.discord.media/path", wantErr: true},
+		{name: "query", endpoint: "voice.discord.media?token=secret", wantErr: true},
+		{name: "fragment", endpoint: "voice.discord.media#fragment", wantErr: true},
+		{name: "zero port", endpoint: "voice.discord.media:0", wantErr: true},
+		{name: "oversized port", endpoint: "voice.discord.media:65536", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := voiceGatewayURL(test.endpoint)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("voiceGatewayURL(%q) = %q, want error", test.endpoint, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("voiceGatewayURL(%q): %v", test.endpoint, err)
+			}
+			if got != test.want {
+				t.Fatalf("voiceGatewayURL(%q) = %q, want %q", test.endpoint, got, test.want)
+			}
+		})
+	}
+}
+
 func readVoiceOperation(t *testing.T, conn *websocket.Conn) voiceChannelJoinOp {
 	t.Helper()
 	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {

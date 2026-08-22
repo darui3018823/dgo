@@ -22,6 +22,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -45,6 +46,8 @@ var ErrWSShardBounds = errors.New("ShardID must be less than ShardCount")
 // ErrWSInvalidToken is returned when a non-bot credential is used with the
 // Gateway. OAuth2 bearer tokens are supported by REST endpoints only.
 var ErrWSInvalidToken = errors.New("gateway connections require a token prefixed with \"Bot \"")
+
+var discordGatewayHostname = regexp.MustCompile(`(?i)^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*discord\.gg$`)
 
 // GuildMembersRequestRateLimitError is returned before sending a request for
 // all guild members when Discord's per-guild, per-bot cooldown is still active.
@@ -557,11 +560,20 @@ func (s *Session) gatewayConnectURL() (connectURL string, usingResume bool, err 
 	if err != nil {
 		return "", false, fmt.Errorf("invalid gateway URL: %w", err)
 	}
-	if parsed.Scheme != "ws" && parsed.Scheme != "wss" {
+	if parsed.Scheme != "wss" {
 		return "", false, fmt.Errorf("invalid gateway URL scheme %q", parsed.Scheme)
 	}
 	if parsed.Host == "" {
 		return "", false, errors.New("gateway URL must include a host")
+	}
+	if parsed.User != nil || parsed.Fragment != "" {
+		return "", false, errors.New("gateway URL must not include user information or a fragment")
+	}
+	if port := parsed.Port(); port != "" && port != "443" {
+		return "", false, errors.New("gateway URL must use the default secure WebSocket port")
+	}
+	if !discordGatewayHostname.MatchString(parsed.Hostname()) {
+		return "", false, errors.New("gateway URL must use an approved Discord host")
 	}
 	query := parsed.Query()
 	query.Set("v", APIVersion)

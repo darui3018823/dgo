@@ -47,7 +47,12 @@ var ErrWSShardBounds = errors.New("ShardID must be less than ShardCount")
 // Gateway. OAuth2 bearer tokens are supported by REST endpoints only.
 var ErrWSInvalidToken = errors.New("gateway connections require a token prefixed with \"Bot \"")
 
-var discordGatewayHostname = regexp.MustCompile(`(?i)^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*discord\.gg$`)
+const discordHostnameLabel = `[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?`
+
+var (
+	discordGatewayHostname = regexp.MustCompile(`(?i)^(?:` + discordHostnameLabel + `\.)*discord\.gg$`)
+	discordGatewayURL      = regexp.MustCompile(`(?i)^wss://(?:` + discordHostnameLabel + `\.)*discord\.gg(?::443)?(?:[/?][^#\r\n]*)?$`)
+)
 
 // GuildMembersRequestRateLimitError is returned before sending a request for
 // all guild members when Discord's per-guild, per-bot cooldown is still active.
@@ -220,6 +225,15 @@ func (s *Session) openGatewayGeneration(lifecycle *gatewaySessionLifecycle) gate
 	if err != nil {
 		s.abortGatewayGeneration(conn)
 		return gatewayAttemptResult{err: err, action: GatewayCloseRecoveryStop}
+	}
+	// Validate the normalized URL itself at the network boundary. Hostname-only
+	// checks do not prove that the complete value passed to the dialer is safe.
+	if !discordGatewayURL.MatchString(connectGateway) {
+		s.abortGatewayGeneration(conn)
+		return gatewayAttemptResult{
+			err:    errors.New("gateway URL could not be normalized safely"),
+			action: GatewayCloseRecoveryStop,
+		}
 	}
 
 	s.log(LogInformational, "connecting to gateway %s", connectGateway)

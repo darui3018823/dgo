@@ -101,10 +101,16 @@ type VoiceConnection struct {
 	voiceClientsConnectHandlers []VoiceClientsConnectHandler
 }
 
-var discordVoiceHostname = regexp.MustCompile(
-	`(?i)^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+` +
-		`(?:discord\.media|discord\.gg|discordapp\.com|discord\.com|discordpartygames\.com|` +
-		`discord-activities\.com|discordactivities\.com|discordsays\.com)$`,
+const discordVoiceDomains = `(?:discord\.media|discord\.gg|discordapp\.com|discord\.com|discordpartygames\.com|` +
+	`discord-activities\.com|discordactivities\.com|discordsays\.com)`
+
+var (
+	discordVoiceHostname = regexp.MustCompile(
+		`(?i)^(?:` + discordHostnameLabel + `\.)+` + discordVoiceDomains + `$`,
+	)
+	discordVoiceURL = regexp.MustCompile(
+		`(?i)^wss://(?:` + discordHostnameLabel + `\.)+` + discordVoiceDomains + `(?::[0-9]{1,5})?\?v=8$`,
+	)
 )
 
 func voiceGatewayURL(endpoint string) (string, error) {
@@ -561,6 +567,11 @@ func (v *VoiceConnection) openVoiceWebsocket(resume bool) error {
 	vg, err := voiceGatewayURL(endpoint)
 	if err != nil {
 		return err
+	}
+	// Validate the normalized URL itself at the network boundary. Hostname-only
+	// checks do not prove that the complete value passed to the dialer is safe.
+	if !discordVoiceURL.MatchString(vg) {
+		return errors.New("voice endpoint could not be normalized safely")
 	}
 	v.log(LogInformational, "connecting to voice endpoint %s", vg)
 	wsConn, _, err := session.Dialer.DialContext(ctx, vg, nil)

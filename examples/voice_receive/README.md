@@ -49,7 +49,7 @@ For general Go discussion, visit [Discord Gophers](https://discord.gg/golang).
 ### Build
 
 This assumes you already have a working Go environment setup and that
-Go 1.26.5 or newer and the module dependencies are available.
+Go 1.26.6 or newer and the module dependencies are available.
 
 From within the voice_receive example folder, run the below command to compile the
 example.

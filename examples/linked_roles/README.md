@@ -8,7 +8,7 @@ metadata, serves the authorization endpoints, and updates the user's role
 connection after the OAuth2 callback.
 
 The example uses the standalone Go module in this directory and requires Go
-1.26.5 or newer.
+1.26.6 or newer.
 
 ### Build
 

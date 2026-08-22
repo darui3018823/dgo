@@ -4,7 +4,7 @@ This guide creates a minimal dgo bot session using the public Discord Bot API.
 
 ## Requirements
 
-- Go 1.26.5 or newer
+- Go 1.26.6 or newer
 - A Discord application with a bot user
 - A bot token stored outside source control
 

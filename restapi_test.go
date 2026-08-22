@@ -275,8 +275,10 @@ func TestRESTDebugLogRedactsCredentials(t *testing.T) {
 		return &http.Response{
 			StatusCode: http.StatusNoContent,
 			Status:     "204 No Content",
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader("")),
+			Header: http.Header{
+				"X-Debug-Value": []string{"response-header-secret"},
+			},
+			Body: io.NopCloser(strings.NewReader("")),
 		}, nil
 	})
 
@@ -289,12 +291,19 @@ func TestRESTDebugLogRedactsCredentials(t *testing.T) {
 		http.MethodPost,
 		"https://discord.com/api/v10/webhooks/123/webhook-secret",
 		map[string]string{"token": "payload-secret"},
+		WithHeader("X-Debug-Value", "request-header-secret"),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := logs.String()
-	for _, secret := range []string{"bot-secret", "webhook-secret", "payload-secret"} {
+	for _, secret := range []string{
+		"bot-secret",
+		"webhook-secret",
+		"payload-secret",
+		"request-header-secret",
+		"response-header-secret",
+	} {
 		if strings.Contains(got, secret) {
 			t.Fatalf("REST debug log leaked %q: %s", secret, got)
 		}

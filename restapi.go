@@ -397,7 +397,7 @@ func (s *Session) requestWithLockedBucket(cfg *RequestConfig, contentType string
 			} else {
 				log.Printf("API REQUEST  PAYLOAD :: [%s]\n", redactJSON(body))
 			}
-			logHTTPHeaders("API REQUEST   HEADER", req.Header)
+			log.Printf("API REQUEST   HEADER :: [values omitted]\n")
 		}
 
 		resp, requestErr := cfg.Client.Do(req)
@@ -427,7 +427,7 @@ func (s *Session) requestWithLockedBucket(cfg *RequestConfig, contentType string
 		invalidStatus := limiter.RecordResponse(resp.StatusCode)
 		if s.Debug {
 			log.Printf("API RESPONSE STATUS :: %s\n", resp.Status)
-			logHTTPHeaders("API RESPONSE HEADER", resp.Header)
+			log.Printf("API RESPONSE HEADER :: [values omitted]\n")
 			if closeErr != nil {
 				log.Println("error closing resp body")
 			}
@@ -733,12 +733,6 @@ func invalidRequestRateLimitEvent(req *http.Request, status InvalidRequestStatus
 		InvalidRequestCount:   status.Count,
 		InvalidRequestLimit:   status.Limit,
 		InvalidRequestWarning: true,
-	}
-}
-
-func logHTTPHeaders(prefix string, headers http.Header) {
-	for key, values := range sanitizeHTTPHeaders(headers) {
-		log.Printf("%s :: [%s] = %+v\n", prefix, key, values)
 	}
 }
 

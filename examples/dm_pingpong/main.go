@@ -24,7 +24,7 @@ func main() {
 	// Create a new Discord session using the provided bot token.
 	dg, err := dgo.NewBot(Token)
 	if err != nil {
-		fmt.Println("error creating Discord session,", err)
+		fmt.Println("error creating Discord session")
 		return
 	}
 
@@ -38,7 +38,7 @@ func main() {
 	// Open a websocket connection to Discord and begin listening.
 	err = dg.Open()
 	if err != nil {
-		fmt.Println("error opening connection,", err)
+		fmt.Println("error opening connection")
 		return
 	}
 
@@ -78,7 +78,7 @@ func messageCreate(s *dgo.Session, m *dgo.MessageCreate) {
 		// 2. We opened enough DM channels quickly enough for Discord to
 		//    label us as abusing the endpoint, blocking us from opening
 		//    new ones.
-		fmt.Println("error creating channel:", err)
+		fmt.Println("error creating channel")
 		s.ChannelMessageSend(
 			m.ChannelID,
 			"Something went wrong while sending the DM!",
@@ -93,7 +93,7 @@ func messageCreate(s *dgo.Session, m *dgo.MessageCreate) {
 		// It may occur either when we do not share a server with the
 		// user (highly unlikely as we just received a message) or
 		// the user disabled DM in their settings (more likely).
-		fmt.Println("error sending DM message:", err)
+		fmt.Println("error sending DM message")
 		s.ChannelMessageSend(
 			m.ChannelID,
 			"Failed to send you a DM. "+

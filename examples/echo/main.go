@@ -44,7 +44,7 @@ func handleEcho(s *dgo.Session, i *dgo.InteractionCreate, opts optionMap) {
 	})
 
 	if err != nil {
-		log.Panicf("could not respond to interaction: %s", err)
+		log.Panic("could not respond to interaction")
 	}
 }
 
@@ -101,12 +101,12 @@ func main() {
 
 	_, err := session.ApplicationCommandBulkOverwrite(*App, *Guild, commands)
 	if err != nil {
-		log.Fatalf("could not register commands: %s", err)
+		log.Fatal("could not register commands")
 	}
 
 	err = session.Open()
 	if err != nil {
-		log.Fatalf("could not open session: %s", err)
+		log.Fatal("could not open session")
 	}
 
 	sigch := make(chan os.Signal, 1)
@@ -115,6 +115,6 @@ func main() {
 
 	err = session.Close()
 	if err != nil {
-		log.Printf("could not close session gracefully: %s", err)
+		log.Print("could not close session gracefully")
 	}
 }

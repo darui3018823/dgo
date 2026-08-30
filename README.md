@@ -20,7 +20,7 @@ with its own compatibility and release policy.
 ## Install
 
 ```sh
-go get github.com/darui3018823/dgo@v1.0.0
+go get github.com/darui3018823/dgo@v1.1.0
 ```
 
 Import the package as `dgo`:
@@ -48,7 +48,8 @@ private client routes are not supported.
 
 - [Getting started](docs/GettingStarted.md)
 - [Migration, compatibility, and deprecation policy](docs/Migration.md)
-- [v1.0.0 release notes](docs/releases/v1.0.0.md)
+- [Webhook Events and Application Identity Profiles](docs/WebhookEvents.md)
+- [v1.1.0 release notes](docs/releases/v1.1.0.md)
 - [Public API inventory](docs/API.md)
 - [Package reference](https://pkg.go.dev/github.com/darui3018823/dgo)
 - [Examples](examples)

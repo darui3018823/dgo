@@ -19,7 +19,7 @@ Create or open a Go module, then add dgo:
 
 ```sh
 go mod init example.com/my-bot
-go get github.com/darui3018823/dgo@v1.0.0
+go get github.com/darui3018823/dgo@v1.1.0
 ```
 
 There is no need to copy the repository into `GOPATH` or run `go install` for

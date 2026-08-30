@@ -14,7 +14,8 @@ path, documentation, and issue tracker when working with this repository.
 
 - [Getting started](GettingStarted.md)
 - [Migration, compatibility, and deprecation policy](Migration.md)
-- [v1.0.0 release notes](releases/v1.0.0.md)
+- [Webhook Events and Application Identity Profiles](WebhookEvents.md)
+- [v1.1.0 release notes](releases/v1.1.0.md)
 - [Public API inventory](API.md)
 - [Upstream synchronization decisions](UpstreamSync.md)
 - [Package reference](https://pkg.go.dev/github.com/darui3018823/dgo)

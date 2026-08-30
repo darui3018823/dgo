@@ -10,10 +10,10 @@ used during releases.
 | Surface | Primary entry points |
 | --- | --- |
 | Session and configuration | `New`, `NewBot`, `NewOAuth2`, `Session`, `Version`, request options |
-| REST | Typed `Session` methods and the low-level `Request*` methods |
+| REST | Typed `Session` methods and the low-level `Request*` methods, including Application Identity Profiles |
 | Gateway | `Open`, `OpenWithContext`, event handlers, intents, state |
 | Voice and DAVE | `VoiceConnection`, voice join methods, packet channels |
-| Interactions | Interaction models, response helpers, signature verification |
+| Interactions and Webhook Events | Interaction models, response helpers, webhook event envelopes, signature verification |
 | Models | Guild, channel, message, user, role, application, entitlement, subscription, and audit-log types |
 | Extensibility | Custom HTTP clients, WebSocket dialers, loggers, raw events |
 

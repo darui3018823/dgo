@@ -15,6 +15,15 @@ go get github.com/darui3018823/dgo@v1.0.0
 go mod tidy
 ```
 
+## v1.1.0 additions
+
+v1.1.0 is a compatible minor release. It adds typed REST support for Discord
+Application Identity Profiles and application identity lookup/deletion, plus
+low-level helpers for receiving and verifying HTTP Webhook Events. Existing
+v1.0.0 code does not require changes. See the
+[v1.1.0 release notes](releases/v1.1.0.md) and the
+[Webhook Events guide](WebhookEvents.md).
+
 ## Migrating the module path
 
 Replace old imports with the dgo module:

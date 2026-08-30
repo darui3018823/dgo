@@ -17,5 +17,6 @@ nav:
     - 'Getting Started': 'GettingStarted.md'
     - 'API Inventory': 'API.md'
     - 'Migration': 'Migration.md'
-    - 'v1.0.0 Release Notes': 'releases/v1.0.0.md'
+    - 'Webhook Events and Application Identity Profiles': 'WebhookEvents.md'
+    - 'v1.1.0 Release Notes': 'releases/v1.1.0.md'
     - 'Upstream Sync': 'UpstreamSync.md'

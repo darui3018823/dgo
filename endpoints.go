@@ -271,6 +271,18 @@ var (
 	EndpointCurrentApplication                = EndpointApplication("@me")
 	EndpointApplicationActivityInstance       = func(aID, iID string) string { return EndpointApplication(aID) + "/activity-instances/" + iID }
 	EndpointApplicationRoleConnectionMetadata = func(aID string) string { return EndpointApplication(aID) + "/role-connections/metadata" }
+	EndpointApplicationIdentityProfile        = func(aID, uID, externalUserID string) string {
+		return EndpointApplication(aID) + "/users/" + uID + "/identities/" + applicationIdentityPathSegment(externalUserID) + "/profile"
+	}
+	EndpointApplicationIdentitiesByUser = func(aID, uID string) string {
+		return EndpointUsers + uID + "/application-identities/" + aID
+	}
+	EndpointApplicationIdentitiesByExternalID = func(aID, providerType, externalUserID string) string {
+		return EndpointApplication(aID) + "/application-identities/" + applicationIdentityPathSegment(providerType) + "/" + applicationIdentityPathSegment(externalUserID)
+	}
+	EndpointApplicationIdentity = func(aID, uID, providerType, externalUserID string) string {
+		return EndpointUsers + uID + "/application-identities/" + aID + "/" + applicationIdentityPathSegment(providerType) + "/" + applicationIdentityPathSegment(externalUserID) + "/delete"
+	}
 
 	EndpointApplicationEmojis = func(aID string) string { return EndpointApplication(aID) + "/emojis" }
 	EndpointApplicationEmoji  = func(aID, eID string) string { return EndpointApplication(aID) + "/emojis/" + eID }

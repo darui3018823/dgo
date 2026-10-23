@@ -96,12 +96,12 @@ func newRestErrorWithCause(req *http.Request, resp *http.Response, body []byte, 
 }
 
 // Error returns a Rest API Error with its status code and body.
-func (r RESTError) Error() string {
+func (r *RESTError) Error() string {
 	return "HTTP " + r.Response.Status + ", " + string(r.ResponseBody)
 }
 
 // Unwrap exposes a typed cause such as ErrUnauthorized.
-func (r RESTError) Unwrap() error {
+func (r *RESTError) Unwrap() error {
 	return r.cause
 }
 
@@ -128,7 +128,7 @@ type RateLimitError struct {
 }
 
 // Error returns a rate limit error with rate limited endpoint and retry time.
-func (e RateLimitError) Error() string {
+func (e *RateLimitError) Error() string {
 	return "Rate limit exceeded on " + e.URL + ", retry after " + e.RetryAfter.String()
 }
 

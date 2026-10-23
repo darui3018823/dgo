@@ -24,6 +24,17 @@ v1.0.0 code does not require changes. See the
 [v1.1.0 release notes](releases/v1.1.0.md) and the
 [Webhook Events guide](WebhookEvents.md).
 
+## Unreleased changes
+
+These changes land in the next release after v1.1.0:
+
+- Go 1.27.3 or newer is required. Update the toolchain before upgrading.
+- `RESTError` and `RateLimitError` implement `error` (and `RESTError.Unwrap`)
+  only as pointers. The library has always returned them as pointers, so code
+  that matches them with `var restErr *RESTError; errors.As(err, &restErr)`
+  needs no change. Code that used the value types `RESTError` or
+  `RateLimitError` as an `error` must switch to the pointer types.
+
 ## Migrating the module path
 
 Replace old imports with the dgo module:
@@ -49,7 +60,7 @@ an alias for this module.
 
 | Area | dgo behavior | Migration |
 | --- | --- | --- |
-| Go version | Go 1.26.6 or newer | Update the toolchain before upgrading. |
+| Go version | Go 1.27.3 or newer | Update the toolchain before upgrading. |
 | Gateway credentials | Only non-empty `Bot ` credentials may connect | Keep bot tokens out of source control. Pass a raw token to `NewBot`, or pass the full `Bot <token>` credential to `New`. |
 | Default intents | `IntentsNone` | Set the smallest required intent set before `Open`. |
 | Allowed mentions | Parsing is disabled by default | Supply `MessageAllowedMentions` when mentions are intentional. |

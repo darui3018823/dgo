@@ -1,6 +1,6 @@
 module github.com/darui3018823/dgo/examples/linked_roles
 
-go 1.26.6
+go 1.27.3
 
 replace github.com/darui3018823/dgo => ../../
 

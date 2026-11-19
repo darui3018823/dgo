@@ -1,6 +1,6 @@
 module github.com/darui3018823/dgo/examples/voice_receive
 
-go 1.27.3
+go 1.27.4
 
 replace github.com/darui3018823/dgo => ../../
 

@@ -2,7 +2,7 @@
 
 ## Scope
 
-- The root module is `github.com/darui3018823/dgo` and requires Go 1.27.3.
+- The root module is `github.com/darui3018823/dgo` and requires Go 1.27.4.
 - `examples/linked_roles` and `examples/voice_receive` are independent Go
   modules. Keep their `go.mod` and `go.sum` valid whenever a change affects
   them.

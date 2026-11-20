@@ -40,6 +40,9 @@ go mod tidy
   that matches them with `var restErr *RESTError; errors.As(err, &restErr)`
   needs no change. Code that used the value types `RESTError` or
   `RateLimitError` as an `error` must switch to the pointer types.
+- `errors.As` with a value target, such as `var v RESTError;
+  errors.As(err, &v)`, still compiles but now panics at run time. Run
+  `go vet ./...` before upgrading; it reports these call sites.
 
 ## Migrating the module path
 

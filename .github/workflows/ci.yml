@@ -152,7 +152,7 @@ jobs:
           go-version-file: ${{ matrix.module.mod }}
           cache-dependency-path: ${{ matrix.module.sum }}
       - name: Install staticcheck
-        run: go install honnef.co/go/tools/cmd/staticcheck@2026.1
+        run: go install honnef.co/go/tools/cmd/staticcheck@2026.2.2
       - name: Run staticcheck
         working-directory: ${{ matrix.module.path }}
         run: staticcheck ./...
@@ -184,7 +184,7 @@ jobs:
           go-version-file: ${{ matrix.module.mod }}
           cache-dependency-path: ${{ matrix.module.sum }}
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.10.0
       - name: Run govulncheck
         working-directory: ${{ matrix.module.path }}
         run: govulncheck ./...

@@ -18,5 +18,6 @@ nav:
     - 'API Inventory': 'API.md'
     - 'Migration': 'Migration.md'
     - 'Webhook Events and Application Identity Profiles': 'WebhookEvents.md'
+    - 'v1.2.0 Release Notes': 'releases/v1.2.0.md'
     - 'v1.1.0 Release Notes': 'releases/v1.1.0.md'
     - 'Upstream Sync': 'UpstreamSync.md'

@@ -24,9 +24,15 @@ v1.0.0 code does not require changes. See the
 [v1.1.0 release notes](releases/v1.1.0.md) and the
 [Webhook Events guide](WebhookEvents.md).
 
-## Unreleased changes
+## v1.2.0 changes
 
-These changes land in the next release after v1.1.0:
+v1.2.0 is a minor release that raises the toolchain requirement and tightens
+the REST error types. See the [v1.2.0 release notes](releases/v1.2.0.md).
+
+```sh
+go get github.com/darui3018823/dgo@v1.2.0
+go mod tidy
+```
 
 - Go 1.27.4 or newer is required. Update the toolchain before upgrading.
 - `RESTError` and `RateLimitError` implement `error` (and `RESTError.Unwrap`)
